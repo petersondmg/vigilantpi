@@ -1,0 +1,29 @@
+user:
+pass:
+
+ffmpeg: /usr/local/bin/ffmpeg
+
+videos_dir: ./cameras
+
+duration: 10m
+
+cameras:
+- name: fundo_hall
+  url: rtsp://192.168.10.104:10554/udp/av0_1
+  pre_rec_urls:
+  - url: http://192.168.10.104/decoder_control.cgi?loginuse=admin&loginpas=admin&command=31&onestep=0&sit=31
+    method: get
+    headers:
+
+- name: palco
+  url: rtsp://192.168.10.109:10554/udp/av0_1
+  pre_rec_urls:
+  - url: http://192.168.10.109/decoder_control.cgi?loginuse=admin&loginpas=admin&command=31&onestep=0&sit=31
+    method: get
+    headers:
+
+daily_backup:
+  scp_url: backup@salaodoreino.com.br:~/cameras/.
+  public_key:
+
+loki_url:
