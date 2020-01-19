@@ -1,0 +1,9 @@
+[Unit]
+Description=Vigilant PI
+
+[Service]
+Type=simple
+ExecStart=/bin/sh /usr/bin/vigilantpid
+
+[Install]
+WantedBy=multi-user.target

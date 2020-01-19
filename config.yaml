@@ -2,6 +2,13 @@ user:
 pass:
 
 ffmpeg: /usr/local/bin/ffmpeg
+# useful on raspberry pi
+# to grant HDD is mounted
+# mount_dir: /mnt/hdd
+
+# device to mount
+# try to mount if setted
+# mount_dev: /dev/sda1
 
 videos_dir: ./cameras
 
@@ -11,19 +18,38 @@ cameras:
 - name: fundo_hall
   url: rtsp://192.168.10.104:10554/udp/av0_1
   pre_rec_urls:
+  # posicao 0
   - url: http://192.168.10.104/decoder_control.cgi?loginuse=admin&loginpas=admin&command=31&onestep=0&sit=31
+    basic_user: admin
+    basic_pass: admin
     method: get
     headers:
+    expect: result="ok"
 
 - name: palco
   url: rtsp://192.168.10.109:10554/udp/av0_1
   pre_rec_urls:
-  - url: http://192.168.10.109/decoder_control.cgi?loginuse=admin&loginpas=admin&command=31&onestep=0&sit=31
+  # camera invertida
+  - url: http://192.168.10.109/camera_control.cgi?loginuse=admin&loginpas=admin&param=5&value=3
+    basic_user: admin
+    basic_pass: admin
     method: get
     headers:
+    expect: result="ok"
+  # posicao 0
+  - url: http://192.168.10.109/decoder_control.cgi?loginuse=admin&loginpas=admin&command=31&onestep=0&sit=31
+    basic_user: admin
+    basic_pass: admin
+    method: get
+    headers:
+    expect: result="ok"
 
 daily_backup:
   scp_url: backup@salaodoreino.com.br:~/cameras/.
   public_key:
 
 loki_url:
+
+# raspberry pi only!!!
+raspberry_pi:
+  led_pin: 19

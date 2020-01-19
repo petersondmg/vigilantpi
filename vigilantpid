@@ -1,0 +1,11 @@
+#!/bin/sh
+
+export CONFIG=/home/alarm/config.yaml
+LOG=/home/alarm/vigilantpi.log
+
+while true; do
+	echo Starting vigilantpi >> $LOG
+	/usr/bin/vigilantpi >> $LOG 2>&1
+	echo vigilantpi died. restarting in 5s >> $LOG
+	sleep 5
+done
