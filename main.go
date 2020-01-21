@@ -2,13 +2,17 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -18,11 +22,14 @@ import (
 
 // Config yaml ...
 type Config struct {
-	FFMPEG      string        `yaml:"ffmpeg"`
-	MountDir    string        `yaml:"mount_dir"`
-	MountDev    string        `yaml:"mount_dev"`
-	User        string        `yaml:"user"`
-	Pass        string        `yaml:"pass"`
+	FFMPEG   string `yaml:"ffmpeg"`
+	MountDir string `yaml:"mount_dir"`
+	MountDev string `yaml:"mount_dev"`
+	Admin    struct {
+		User string `yaml:"user"`
+		Pass string `yaml:"pass"`
+		Addr string `yaml:"addr"`
+	} `yaml:"admin"`
 	VideosDir   string        `yaml:"videos_dir"`
 	LokiURL     string        `yaml:"loki_url"`
 	Duration    time.Duration `yaml:"duration"`
@@ -34,6 +41,8 @@ type Config struct {
 	RaspberryPI struct {
 		LEDPin int `yaml:"led_pin"`
 	} `yaml:"raspberry_pi"`
+	WifiSSID string `yaml:"wifi_ssid"`
+	WifiPass string `yaml:"wifi_pass"`
 }
 
 // Camera ...
@@ -86,27 +95,40 @@ func (c *Camera) RunPreRecURLs() {
 }
 
 var (
-	logger    *log.Logger
-	videosDir string
-	duration  time.Duration
-	ffmpeg    string
-	led       struct {
-		Blink func()
-		On    func()
-		Off   func()
+	logger     *log.Logger
+	videosDir  string
+	duration   time.Duration
+	configPath string
+	ffmpeg     string
+	led        struct {
+		Blink     func()
+		On        func()
+		Off       func()
+		BlinkFast func()
 	}
 	mountedDir string
 	mountDev   string
 
 	preRecClient = http.Client{
-		Timeout: time.Second * 3,
+		Timeout: time.Second * 60,
 	}
+
+	config *Config
 )
 
 func main() {
+	kill := make(chan os.Signal, 1)
+	signal.Notify(kill, os.Interrupt, syscall.SIGTERM)
+
+	done := make(chan struct{})
+
+	go func() {
+		<-kill
+		done <- struct{}{}
+	}()
+
 	logger = log.New(os.Stdout, "", log.LstdFlags)
 
-	var configPath string
 	if configPath = os.Getenv("CONFIG"); configPath == "" {
 		logger.Println("no CONFIG env, using default value")
 		configPath = "./config.yaml"
@@ -115,7 +137,13 @@ func main() {
 	errIsNil(err)
 
 	c := new(Config)
-	errIsNil(yaml.NewDecoder(f).Decode(c))
+	err = yaml.NewDecoder(f).Decode(c)
+	f.Close()
+	errIsNil(err)
+
+	config = c
+
+	go httpServer(c.Admin.Addr, c.Admin.User, c.Admin.Pass)
 
 	if videosDir = c.VideosDir; videosDir == "" {
 		logger.Println("no videos_dir defined, using default value")
@@ -143,40 +171,19 @@ func main() {
 
 	logger.Println("started!")
 
-	if !hddIsMounted() {
-		led.Blink()
-		tryMount()
-		for !hddIsMounted() {
-			logger.Println("hdd is not mounted. waiting..")
-			time.Sleep(time.Second * 10)
-		}
-	}
-	logger.Println("hdd is mounted")
-	led.On()
+	go run(c.Cameras)
 
-	go updater()
-
-	rec := make(chan Camera, 0)
-	done := make(chan struct{}, 0)
-	go func() {
-		for c := range rec {
-			c := c
-			go func() {
-				record(c)
-				rec <- c
-			}()
-		}
-	}()
-	for _, camera := range c.Cameras {
-		rec <- camera
-	}
 	<-done
 	logger.Println("finished")
 }
 
+const (
+	dayDirLayout = "rec_2006_01_02"
+)
+
 func record(c Camera) {
 	start := time.Now()
-	dayDir := start.Format("2006_01_02")
+	dayDir := start.Format(dayDirLayout)
 	fileName := start.Format("15_04_05_") + c.Name + ".mp4"
 
 	if !hddIsMounted() {
@@ -284,8 +291,14 @@ func setupLED(ledPin int) func() error {
 	pin.Output()
 
 	var blinking bool
+	var s sync.Mutex
 	led.Blink = func() {
+		if blinking {
+			return
+		}
+		s.Lock()
 		blinking = true
+		s.Unlock()
 		go func() {
 			for blinking {
 				pin.Toggle()
@@ -293,15 +306,28 @@ func setupLED(ledPin int) func() error {
 			}
 		}()
 	}
+	led.BlinkFast = func() {
+		for range make([]int, 50) {
+			pin.Toggle()
+			time.Sleep(time.Millisecond * 100)
+		}
+	}
 	led.On = func() {
+		s.Lock()
 		blinking = false
+		s.Unlock()
 		pin.High()
 	}
 	led.Off = func() {
+		s.Lock()
 		blinking = false
+		s.Unlock()
 		pin.Low()
 	}
-	return rpio.Close
+	return func() error {
+		led.Off()
+		return rpio.Close()
+	}
 }
 
 func hddIsMounted() bool {
@@ -374,4 +400,252 @@ var shellR = strings.NewReplacer(
 
 func safeShell(s string) string {
 	return shellR.Replace(s)
+}
+
+func updateConfig() {
+	newConfig := path.Join(videosDir, "config.yaml")
+	oldConfig := path.Join(videosDir, "config.old.yaml")
+	newConfigBkp := path.Join(videosDir, "config.bkp.yaml")
+	f, err := os.Open(newConfig)
+	if err != nil {
+		logger.Println("no config to update", err)
+		return
+	}
+
+	c := new(Config)
+	err = yaml.NewDecoder(f).Decode(c)
+	if err != nil {
+		logger.Println("new config is invalid...wont update:", err)
+		return
+	}
+
+	oldBackupFile, err := os.OpenFile(oldConfig, os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		logger.Println("error creating config.old.yaml (backup)")
+	} else {
+		err = yaml.NewEncoder(oldBackupFile).Encode(config)
+		if err != nil {
+			logger.Println("error writing on config.old.yaml (backup)")
+		}
+		oldBackupFile.Close()
+	}
+
+	currentFile, err := os.OpenFile(configPath, os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		logger.Println("wont udpate...error opening current config.yaml", err)
+		return
+	}
+	defer currentFile.Close()
+	if err = os.Rename(newConfig, newConfigBkp); err != nil {
+		logger.Println("error renaming config.yaml to config.bpk.yaml on videos dir")
+	}
+	ssid := c.WifiSSID
+	pass := c.WifiPass
+
+	c.WifiSSID = ""
+	c.WifiPass = ""
+
+	err = yaml.NewEncoder(currentFile).Encode(c)
+	if err == nil {
+		err = currentFile.Close()
+	}
+	if err != nil {
+		logger.Println("error updating config.yaml", err)
+		return
+	}
+	logger.Println("config.yaml updated")
+
+	led.BlinkFast()
+
+	if ssid != "" {
+		setWifi(ssid, pass)
+	}
+
+	reboot()
+	os.Exit(0)
+}
+
+func setWifi(ssid, pass string) {
+	logger.Println("setting wifi to", ssid, pass)
+	_, err := exec.Command("sh", "-c", fmt.Sprintf("wpa_passphrase '%s' '%s' > /etc/wpa_supplicant/wpa_supplicant-wlan0.conf", ssid, pass)).Output()
+	if err != nil {
+		logger.Println("error wpa_passphrase cmd", err)
+		return
+	}
+	logger.Println("wifi updated")
+}
+
+func run(cameras []Camera) {
+	if !hddIsMounted() {
+		led.Blink()
+		tryMount()
+		for !hddIsMounted() {
+			logger.Println("hdd is not mounted. waiting..")
+			time.Sleep(time.Second * 10)
+		}
+	}
+	logger.Println("hdd is mounted")
+
+	updateConfig()
+
+	led.On()
+
+	go every24Hours()
+
+	go updater()
+
+	rec := make(chan Camera, 0)
+	go func() {
+		for c := range rec {
+			c := c
+			go func() {
+				record(c)
+				rec <- c
+			}()
+		}
+	}()
+
+	for _, camera := range cameras {
+		rec <- camera
+	}
+}
+
+const tpl = `
+<DOCTYPE html>
+<html charset="utf-8">
+<h3 style="color:blue">VigilantPI - Admin</h3>
+
+<br><br>
+<a href="/videos/">Cameras Videos</a>
+
+
+<h4>Server Date</h4>
+<pre>:date:</pre>
+<hr>
+<br>
+
+<h4>DF (disk space)</h4>
+<pre>:df:</pre>
+<hr>
+<br>
+
+<h4>Log</h4>
+<pre>:log:</pre>
+<hr>
+<br>
+
+<h4>Config</h4>
+<pre>:config:</pre>
+<hr>
+<br>
+
+</html>
+`
+
+func httpServer(addr, user, pass string) {
+	fs := http.FileServer(http.Dir(config.VideosDir))
+	http.Handle("/videos/", http.StripPrefix("/videos/", fs))
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		replacer := strings.NewReplacer(
+			":date:", serverDate(),
+			":df:", serverDF(),
+			":log:", serverLog(),
+			":config:", serverConfig(),
+		)
+
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(replacer.Replace(tpl)))
+	})
+
+	if addr == "" {
+		addr = ":80"
+	}
+	logger.Printf("starting admin server on %s", addr)
+	err := http.ListenAndServe(addr, nil)
+	if err != nil {
+		logger.Print("error on http server: %s", err)
+	}
+}
+
+func auth(fn http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if config.Admin.User != "" || config.Admin.Pass != "" {
+			user, pass, _ := r.BasicAuth()
+			if user != config.Admin.User || pass != config.Admin.Pass {
+				http.Error(w, "Unauthorized.", 401)
+				return
+			}
+		}
+		fn(w, r)
+	}
+}
+
+func execString(cmd string, args ...string) string {
+	res, err := exec.Command(cmd, args...).Output()
+	if err != nil {
+		return err.Error()
+	}
+	return string(res)
+}
+
+func serverDate() string {
+	return execString("date")
+}
+
+func serverDF() string {
+	return execString("df", "-H")
+}
+func serverLog() string {
+	return execString("tail", "-n", "50", "/home/alarm/vigilantpi.log")
+}
+func serverConfig() string {
+	b, _ := yaml.Marshal(config)
+	return string(b)
+}
+
+func every24Hours() {
+	ticker := time.NewTicker(24 * time.Second)
+	deleteOldStuff := func() {
+		logger.Println("veryfing old content")
+		files, err := ioutil.ReadDir(videosDir)
+		if err != nil {
+			logger.Printf("error getting files on %s when deleting old content: %s", videosDir, err)
+			return
+		}
+
+		oneMonthAgo := time.Now().AddDate(0, -1, 0)
+		logger.Println("deleting files older than", oneMonthAgo.Format("02/01/2006"))
+
+		for _, f := range files {
+			if !f.IsDir() {
+				continue
+			}
+			fileTime, err := time.Parse(dayDirLayout, f.Name())
+			if err != nil {
+				continue
+			}
+			if !fileTime.Before(oneMonthAgo) {
+				continue
+			}
+			go func(path string) {
+				logger.Printf("deleting %s", path)
+				if err := os.Remove(path); err != nil {
+					logger.Printf("error deleteing %s: %s", path, err)
+				}
+			}(path.Join(videosDir, f.Name()))
+		}
+	}
+	go deleteOldStuff()
+	for {
+		select {
+		case <-ticker.C:
+			deleteOldStuff()
+		}
+	}
+}
+
+func reboot() {
+	logger.Println("rebooting...")
+	exec.Command("reboot")
 }
