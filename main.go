@@ -419,9 +419,9 @@ func updateConfig() {
 		return
 	}
 
-	oldBackupFile, err := os.OpenFile(oldConfig, os.O_WRONLY|os.O_TRUNC, 0755)
+	oldBackupFile, err := os.OpenFile(oldConfig, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0755)
 	if err != nil {
-		logger.Println("error creating config.old.yaml (backup)")
+		logger.Printf("error creating config.old.yaml (backup): %s", err)
 	} else {
 		err = yaml.NewEncoder(oldBackupFile).Encode(config)
 		if err != nil {
