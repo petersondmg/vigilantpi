@@ -1,5 +1,10 @@
-user:
-pass:
+wifi_ssdi:
+wifi_pass:
+
+admin:
+  user:
+  pass:
+  addr: :80
 
 ffmpeg: /usr/local/bin/ffmpeg
 # useful on raspberry pi
@@ -45,8 +50,7 @@ cameras:
     expect: result="ok"
 
 daily_backup:
-  scp_url: backup@salaodoreino.com.br:~/cameras/.
-  public_key:
+  scp_url:
 
 loki_url:
 

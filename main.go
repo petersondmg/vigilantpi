@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -112,6 +113,8 @@ var (
 	preRecClient = http.Client{
 		Timeout: time.Second * 60,
 	}
+
+	started = time.Now()
 
 	config *Config
 )
@@ -219,11 +222,9 @@ func record(c Camera) {
 		"-r",
 		"10",
 		"-an",
-		/*
-			sets duration
-			"-to",
-			"60",
-		*/
+		//sets duration
+		"-to",
+		strconv.Itoa(int(duration.Seconds())),
 		path.Join(videosDir, dayDir, fileName),
 	}
 
@@ -247,18 +248,35 @@ func record(c Camera) {
 		return
 	}
 
-	time.Sleep(duration)
+	timeout := time.NewTimer(duration + (time.Second * 30))
+	defer timeout.Stop()
+
+	exited := make(chan struct{})
+
 	go func() {
-		p.Signal(os.Interrupt)
-		s, err := p.Wait()
+		state, err := p.Wait()
 		if err != nil {
 			logger.Printf("error getting proccess state %s - %s", c.Name, err)
 			return
 		}
-		for !s.Exited() {
+		if !state.Exited() {
+			logger.Printf("p.Wait() returned but process hasn't exited for %s. killing process...", c.Name)
+			p.Kill()
 		}
-		logger.Printf("recording %s took %s\n", c.Name, time.Now().Sub(start))
+		exited <- struct{}{}
 	}()
+
+	select {
+	case <-timeout.C:
+		logger.Printf("recording process of %s has timeout. killing process...", c.Name)
+		p.Signal(os.Interrupt)
+		p.Kill()
+		return
+
+	case <-exited:
+	}
+
+	logger.Printf("recording %s took %s\n", c.Name, time.Now().Sub(start))
 }
 
 func errIsNil(err error) {
@@ -515,7 +533,9 @@ const tpl = `
 <html charset="utf-8">
 <h3 style="color:blue">VigilantPI - Admin</h3>
 
-<br><br>
+<br>
+Up since: :started:
+<br>
 <a href="/videos/">Cameras Videos</a>
 
 
@@ -548,6 +568,7 @@ func httpServer(addr, user, pass string) {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		replacer := strings.NewReplacer(
+			":started:", started.Format(time.RubyDate),
 			":date:", serverDate(),
 			":df:", serverDF(),
 			":log:", serverLog(),
@@ -605,7 +626,7 @@ func serverConfig() string {
 }
 
 func every24Hours() {
-	ticker := time.NewTicker(24 * time.Second)
+	ticker := time.NewTicker(24 * time.Hour)
 	deleteOldStuff := func() {
 		logger.Println("veryfing old content")
 		files, err := ioutil.ReadDir(videosDir)
@@ -630,8 +651,8 @@ func every24Hours() {
 			}
 			go func(path string) {
 				logger.Printf("deleting %s", path)
-				if err := os.Remove(path); err != nil {
-					logger.Printf("error deleteing %s: %s", path, err)
+				if err := os.RemoveAll(path); err != nil {
+					logger.Printf("error deleting %s: %s", path, err)
 				}
 			}(path.Join(videosDir, f.Name()))
 		}
