@@ -6,16 +6,20 @@ admin:
   pass:
   addr: :80
 
-ffmpeg: /usr/local/bin/ffmpeg
+ffmpeg: /usr/bin/ffmpeg
 # useful on raspberry pi
 # to grant HDD is mounted
-# mount_dir: /mnt/hdd
+mount_dir: /mnt/hdd
 
 # device to mount
 # try to mount if setted
-# mount_dev: /dev/sda1
+mount_dev: /dev/sda1
 
-videos_dir: ./cameras
+# set to true if experiencing hdd becoming unavailable
+# after some time running
+prevent_hdd_spindown: true
+
+videos_dir: /mnt/hdd/cameras
 
 duration: 10m
 
@@ -48,6 +52,25 @@ cameras:
     method: get
     headers:
     expect: result="ok"
+
+cron:
+- every: [6h]
+  hooks:
+  - url: http://192.168.10.104/reboot.cgi?&loginuse=admin&loginpas=admin
+    basic_user: admin
+    basic_pass: admin
+    method: get
+    headers:
+    expect: result="ok"
+    desc: reboot camera fundo_hall
+
+  - url: http://192.168.10.109/reboot.cgi?&loginuse=admin&loginpas=admin&user=admin
+    basic_user: admin
+    basic_pass: admin
+    method: get
+    headers:
+    expect: result="ok"
+    desc: reboot camera palco
 
 daily_backup:
   scp_url:

@@ -1,0 +1,9 @@
+[Unit]
+Description=Wifi Restarter
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /usr/bin/wifirestartd
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -13,6 +14,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,44 +26,102 @@ import (
 
 // Config yaml ...
 type Config struct {
-	FFMPEG   string `yaml:"ffmpeg"`
-	MountDir string `yaml:"mount_dir"`
-	MountDev string `yaml:"mount_dev"`
-	Admin    struct {
+	FFMPEG             string `yaml:"ffmpeg"`
+	MountDir           string `yaml:"mount_dir"`
+	MountDev           string `yaml:"mount_dev"`
+	PreventHDDSpindown bool   `yaml:"prevent_hdd_spindown"`
+
+	Admin struct {
 		User string `yaml:"user"`
 		Pass string `yaml:"pass"`
 		Addr string `yaml:"addr"`
 	} `yaml:"admin"`
-	VideosDir   string        `yaml:"videos_dir"`
-	LokiURL     string        `yaml:"loki_url"`
-	Duration    time.Duration `yaml:"duration"`
-	Cameras     []Camera      `yaml:"cameras"`
+
+	VideosDir string        `yaml:"videos_dir"`
+	Duration  time.Duration `yaml:"duration"`
+	Cameras   []Camera      `yaml:"cameras"`
+
+	LokiURL string `yaml:"loki_url"`
+
 	DailyBackup struct {
 		ScpURL    string `yaml:"scp_url"`
 		PublicKey string `yaml:"public_key"`
 	} `yaml:"daily_backup"`
+
 	RaspberryPI struct {
 		LEDPin int `yaml:"led_pin"`
 	} `yaml:"raspberry_pi"`
+
 	WifiSSID string `yaml:"wifi_ssid"`
 	WifiPass string `yaml:"wifi_pass"`
+
+	Cron []Cron `yaml:"cron"`
+}
+
+// Cron ...
+type Cron struct {
+	Every []time.Duration `yaml:"every"`
+	At    []time.Time     `yaml:"at"`
+	Hooks []Hook          `yaml:"hooks"`
+}
+
+// Hook ...
+type Hook struct {
+	URL       string `yaml:"url"`
+	Method    string `yaml:"method"`
+	BasicUser string `yaml:"basic_user"`
+	BasicPass string `yaml:"basic_pass"`
+	Headers   []struct {
+		Name  string `yaml:"name"`
+		Value string `yaml:"value"`
+	} `yaml:"headers"`
+	Expect      string `yaml:"expect"`
+	Description string `yaml:"desc"`
+}
+
+func (h *Hook) Run() {
+	req, err := http.NewRequest(strings.ToUpper(h.Method), h.URL, nil)
+	if err != nil {
+		logger.Printf("error on hook %s - url: %s: %s", h.Description, h.URL, err)
+		return
+	}
+	for _, header := range h.Headers {
+		req.Header.Set(header.Name, header.Value)
+	}
+
+	if h.BasicUser != "" || h.BasicPass != "" {
+		req.SetBasicAuth(h.BasicUser, h.BasicPass)
+	}
+
+	go func() {
+		res, err := preRecClient.Do(req)
+		if err != nil {
+			logger.Printf("error on hook %s request: %s", h.Description, err)
+			return
+		}
+		defer res.Body.Close()
+		body, _ := ioutil.ReadAll(res.Body)
+		bodyText := string(body)
+		if h.Expect != "" && !strings.Contains(bodyText, h.Expect) {
+			logger.Printf("hook %s returned unexpected result. expected %s, got %s", h.Description, h.Expect, bodyText)
+		}
+	}()
 }
 
 // Camera ...
 type Camera struct {
 	Name       string `yaml:"name"`
 	URL        string `yaml:"url"`
-	PreRecURLs []struct {
-		URL       string `yaml:"url"`
-		Method    string `yaml:"method"`
-		BasicUser string `yaml:"basic_user"`
-		BasicPass string `yaml:"basic_pass"`
-		Headers   []struct {
-			Name  string `yaml:"name"`
-			Value string `yaml:"value"`
-		} `yaml:"headers"`
-		Expect string `yaml:"expect"`
-	} `yaml:"pre_rec_urls"`
+	PreRecURLs []Hook `yaml:"pre_rec_urls"`
+	healthy    bool
+}
+
+func (c *Camera) Unhealthy() {
+	c.healthy = false
+}
+
+func (c *Camera) Healthy() {
+	c.healthy = true
 }
 
 func (c *Camera) HealthCheck() func() {
@@ -86,7 +146,7 @@ func (c *Camera) HealthCheck() func() {
 		pinger.Run()
 
 		stats := pinger.Statistics()
-		if stats.PacketsRecv == 0 {
+		if stats.PacketsRecv < pinger.Count {
 			logger.Printf(
 				"camera %s in not responding. ping stats - sent: %d, recv: %d, loss: %v%%",
 				c.Name,
@@ -95,6 +155,7 @@ func (c *Camera) HealthCheck() func() {
 			led.BadCamera()
 			return
 		}
+		c.Healthy()
 
 		led.On()
 	}
@@ -113,8 +174,6 @@ func (c *Camera) HealthCheck() func() {
 		}
 	}()
 
-	go p()
-
 	return func() {
 		t.Stop()
 		stop <- struct{}{}
@@ -122,42 +181,20 @@ func (c *Camera) HealthCheck() func() {
 }
 
 func (c *Camera) RunPreRecURLs() {
-	for _, u := range c.PreRecURLs {
-		u := u
-		req, err := http.NewRequest(strings.ToUpper(u.Method), u.URL, nil)
-		if err != nil {
-			logger.Printf("error on pre rec %s", u.URL, err)
-			continue
-		}
-		for _, h := range u.Headers {
-			req.Header.Set(h.Name, h.Value)
-		}
-
-		if u.BasicUser != "" || u.BasicPass != "" {
-			req.SetBasicAuth(u.BasicUser, u.BasicPass)
-		}
-
-		go func() {
-			res, err := preRecClient.Do(req)
-			if err != nil {
-				logger.Println("error on pre rec url request", err)
-				return
-			}
-			defer res.Body.Close()
-			body, _ := ioutil.ReadAll(res.Body)
-			bodyText := string(body)
-			if u.Expect != "" && !strings.Contains(bodyText, u.Expect) {
-				logger.Printf("pre rec unexpected result. expected %s, got %s", u.Expect, bodyText)
-			}
-		}()
+	for _, h := range c.PreRecURLs {
+		h := h
+		h.Run()
 	}
 }
 
 const (
-	logPath = "/home/alarm/vigilantpi.log"
+	logPath          = "/home/alarm/vigilantpi.log"
+	minVideoDuration = time.Minute * 1
 )
 
 var (
+	version = "development"
+
 	logger     *log.Logger
 	videosDir  string
 	duration   time.Duration
@@ -183,20 +220,23 @@ var (
 	started = time.Now()
 
 	config *Config
+
+	stop chan struct{}
 )
 
 func main() {
 	kill := make(chan os.Signal, 1)
 	signal.Notify(kill, os.Interrupt, syscall.SIGTERM)
-
-	done := make(chan struct{})
+	stop = make(chan struct{})
 
 	go func() {
 		<-kill
-		done <- struct{}{}
+		stop <- struct{}{}
 	}()
 
 	logger = log.New(os.Stdout, "", log.LstdFlags)
+
+	logger.Printf("VigilantPI version: %s", version)
 
 	if configPath = os.Getenv("CONFIG"); configPath == "" {
 		logger.Println("no CONFIG env, using default value")
@@ -221,6 +261,8 @@ func main() {
 	config = c
 
 	go httpServer(c.Admin.Addr, c.Admin.User, c.Admin.Pass)
+
+	go mdnsServer()
 
 	if videosDir = c.VideosDir; videosDir == "" {
 		logger.Println("no videos_dir defined, using default value")
@@ -251,9 +293,22 @@ func main() {
 
 	logger.Println("started!")
 
-	go run(c.Cameras)
+	ctx, cancel := context.WithCancel(context.Background())
 
-	<-done
+	finished := make(chan struct{})
+	go func() {
+		run(ctx, c.Cameras)
+		finished <- struct{}{}
+	}()
+
+	go crond(c.Cron)
+
+	<-stop
+	cancel()
+
+	logger.Println("waiting recordings to finish")
+	<-finished
+
 	logger.Println("finished")
 }
 
@@ -261,7 +316,7 @@ const (
 	dayDirLayout = "rec_2006_01_02"
 )
 
-func record(c Camera) {
+func record(ctx context.Context, c *Camera) {
 	start := time.Now()
 	dayDir := start.Format(dayDirLayout)
 	fileName := start.Format("15_04_05_") + c.Name + ".mp4"
@@ -273,8 +328,10 @@ func record(c Camera) {
 		return
 	}
 
+	var err error
+
 	recDir := path.Join(videosDir, dayDir)
-	if err := os.MkdirAll(recDir, 0774); err != nil {
+	if err = os.MkdirAll(recDir, 0774); err != nil {
 		logger.Printf("error creating recording directory %s: %s", recDir, err)
 		led.BadHD()
 		return
@@ -332,30 +389,47 @@ func record(c Camera) {
 
 	exited := make(chan struct{})
 
+	var sigterm bool
+
 	go func() {
 		state, err := p.Wait()
 		if err != nil {
 			logger.Printf("error getting proccess state %s - %s", c.Name, err)
 			return
 		}
-		if !state.Exited() {
+		if !sigterm && !state.Exited() {
 			logger.Printf("p.Wait() returned but process hasn't exited for %s. killing process...", c.Name)
+			p.Signal(syscall.SIGKILL)
 			p.Kill()
 		}
 		exited <- struct{}{}
 	}()
 
+	go func() {
+		<-ctx.Done()
+		logger.Println("sending SIGTERM to ffmpeg process")
+		sigterm = true
+		p.Signal(syscall.SIGTERM)
+	}()
+
 	select {
 	case <-timeout.C:
 		logger.Printf("recording process of %s has timeout. killing process...", c.Name)
-		p.Signal(os.Interrupt)
+		p.Signal(syscall.SIGKILL)
 		p.Kill()
 		return
 
 	case <-exited:
 	}
 
-	logger.Printf("recording %s took %s\n", c.Name, time.Now().Sub(start))
+	took := time.Now().Sub(start)
+	logger.Printf("recording %s took %s\n", c.Name, took)
+
+	if took < minVideoDuration-10*time.Second {
+		logger.Printf("camera %s is unhealthy", c.Name)
+		led.BadCamera()
+		c.Unhealthy()
+	}
 }
 
 func errIsNil(err error) {
@@ -516,6 +590,25 @@ func tryMount() {
 	).Output()
 	if err != nil {
 		logger.Println("error when trying to mount:", err)
+		return
+	}
+	if config.PreventHDDSpindown {
+		if config.MountDev == "" {
+			logger.Printf("can't prevent hdd from spin down. mount_dev must be set")
+			return
+		}
+
+		logger.Printf("preventing hdd from spinning down (hdparm)")
+
+		if _, err := exec.Command("hdparm", "-B", "255", config.MountDev).Output(); err != nil {
+			logger.Printf("err disabling power management from hdd: %s", err)
+			return
+		}
+
+		if _, err := exec.Command("hdparm", "-S", "0", config.MountDev).Output(); err != nil {
+			logger.Printf("err disabling hdd spindown timeout: %s", err)
+			return
+		}
 	}
 }
 
@@ -588,9 +681,12 @@ func updateConfig() {
 
 	if ssid != "" {
 		setWifi(ssid, pass)
+		reboot()
+		return
 	}
 
-	reboot()
+	// only restart
+	os.Exit(0)
 }
 
 func setWifi(ssid, pass string) {
@@ -603,7 +699,7 @@ func setWifi(ssid, pass string) {
 	logger.Println("wifi updated")
 }
 
-func run(cameras []Camera) {
+func run(ctx context.Context, cameras []Camera) {
 	if !hddIsMounted() {
 		led.BadHD()
 		tryMount()
@@ -622,20 +718,38 @@ func run(cameras []Camera) {
 
 	go updater()
 
-	rec := make(chan Camera, 0)
+	var wg sync.WaitGroup
+
+	rec := make(chan *Camera)
 	go func() {
-		for c := range rec {
-			c := c
-			go func() {
-				record(c)
-				rec <- c
-			}()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+
+			case c := <-rec:
+				wg.Add(1)
+				c.healthy = true
+				go func() {
+					record(ctx, c)
+					wg.Done()
+					if c.healthy {
+						rec <- c
+						return
+					}
+					time.Sleep(time.Minute * 5)
+					rec <- c
+				}()
+			}
 		}
 	}()
 
 	for _, camera := range cameras {
-		rec <- camera
+		camera := camera
+		rec <- &camera
 	}
+
+	wg.Wait()
 }
 
 const tpl = `
@@ -643,12 +757,13 @@ const tpl = `
 <html charset="utf-8">
 <body>
 	<h3 style="color:blue">VigilantPI - Admin</h3>
+	<pre>Version: :version:</pre>
 
 	<br>
 	<a href="/videos/">Videos</a>
 	<hr>
 
-	<a href="/reboot" onclick="confirm('Are you sure?')">Reboot</a> | <a href="/clearlog" onclick="confirm('Are you sure?')">Clear log</a>
+	<a href="/restart" onclick="confirm('Are you sure?')">Restart</a> | <a href="/reboot" onclick="confirm('Are you sure?')">Reboot OS</a> | <a href="/clearlog" onclick="confirm('Are you sure?')">Clear log</a>
 
 
 	<h4>Server Date</h4>
@@ -685,7 +800,7 @@ func httpServer(addr, user, pass string) {
 		w.Write([]byte(`<!DOCTYPE html>
 		<html>
 		<body>
-		<h3 style="color:blue">restarting... waiting 60 seconds...</h3>
+		<h3 style="color:blue">rebooting... waiting 60 seconds...</h3>
 		<script>
 		setTimeout(function() {
 			window.location = "/";
@@ -700,6 +815,26 @@ func httpServer(addr, user, pass string) {
 		}()
 	})
 
+	http.HandleFunc("/restart", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-type", "text/html")
+		w.Write([]byte(`<!DOCTYPE html>
+		<html>
+		<body>
+		<h3 style="color:blue">restarting... waiting 10 seconds...</h3>
+		<script>
+		setTimeout(function() {
+			window.location = "/";
+		}, 1000*10);
+		</script>		
+		</body>
+		</html>
+		`))
+		go func() {
+			time.Sleep(time.Second)
+			restart()
+		}()
+	})
+
 	http.HandleFunc("/clearlog", func(w http.ResponseWriter, r *http.Request) {
 		go clearLogs()
 		time.Sleep(time.Second)
@@ -707,12 +842,19 @@ func httpServer(addr, user, pass string) {
 	})
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+
+		var dfOption = `<a href="/?withdf=1">Update</a>`
+		if r.URL.Query().Get("withdf") != "" {
+			dfOption = serverDF()
+		}
+
 		replacer := strings.NewReplacer(
 			":started:", started.Format(time.RubyDate),
 			":date:", serverDate(),
-			":df:", serverDF(),
+			":df:", dfOption,
 			":log:", serverLog(),
 			":config:", serverConfig(),
+			":version:", version,
 		)
 
 		w.Header().Set("Content-Type", "text/html")
@@ -819,6 +961,11 @@ func every24Hours() {
 	}
 }
 
+func restart() {
+	logger.Println("restarting...")
+	stop <- struct{}{}
+}
+
 func reboot() {
 	logger.Println("rebooting...")
 	_, err := exec.Command("reboot").Output()
@@ -864,4 +1011,42 @@ func tryRollback() {
 	}
 
 	reboot()
+}
+
+func crond(entries []Cron) {
+	if len(entries) == 0 {
+		return
+	}
+	logger.Println("setuping cron hooks")
+	for _, cron := range entries {
+		cron := cron
+		for _, d := range cron.Every {
+			go func() {
+				for now := range time.Tick(d) {
+					for _, h := range cron.Hooks {
+						logger.Printf("running cron %s at %v", h.Description, now)
+						h.Run()
+					}
+				}
+			}()
+		}
+	}
+}
+
+func mdnsServer() {
+	/*
+		host, _ := os.Hostname()
+		service, err := mdns.NewMDNSService(host, "_foobar._tcp", "", "", 80, nil, []string{"VigilantPI Admin"})
+		if err != nil {
+			logger.Printf("error NewMDNSService: %s", err)
+		}
+
+		// Create the mDNS server, defer shutdown
+		server, err := mdns.NewServer(&mdns.Config{Zone: service})
+		if err != nil {
+			logger.Printf("error creating mdns server: %s", err)
+		}
+		//defer server.Shutdown()
+		_ = server
+	*/
 }
