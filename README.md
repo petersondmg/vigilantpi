@@ -1,6 +1,6 @@
 ### VigilantPI
 
-Vigilant is an nvr system for IP cameras, having mainly RaspberryPI's as target.
+Vigilant is an nvr system for IP cameras, having mainly RaspberryPI as target.
 
 It can record any URL supported by *ffmpeg*.
 It provides some HTTP hooks that can be used to deal with IP camera's instabilities
