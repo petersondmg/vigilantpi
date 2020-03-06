@@ -1,4 +1,4 @@
-### VigilantPI
+## VigilantPI
 
 Vigilant is an nvr system for IP cameras, having mainly RaspberryPI as target.
 
