@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,12 +16,13 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v2"
 
+	"github.com/hashicorp/mdns"
 	"github.com/sparrc/go-ping"
 	"github.com/stianeikeland/go-rpio/v4"
 )
@@ -112,6 +115,7 @@ func (h *Hook) Run() {
 type Camera struct {
 	Name       string `yaml:"name"`
 	URL        string `yaml:"url"`
+	Audio      bool   `yaml:"audio"`
 	PreRecURLs []Hook `yaml:"pre_rec_urls"`
 	healthy    bool
 }
@@ -222,6 +226,8 @@ var (
 	config *Config
 
 	stop chan struct{}
+
+	shouldReboot bool
 )
 
 func main() {
@@ -310,6 +316,13 @@ func main() {
 	<-finished
 
 	logger.Println("finished")
+
+	if shouldReboot {
+		_, err := exec.Command("reboot").Output()
+		if err != nil {
+			logger.Printf("error rebooting: %s", err)
+		}
+	}
 }
 
 const (
@@ -348,6 +361,7 @@ func record(ctx context.Context, c *Camera) {
 		ffmpeg,
 		"-nostdin",
 		"-nostats",
+		"-y",
 		"-r",
 		"10",
 		"-i",
@@ -356,12 +370,21 @@ func record(ctx context.Context, c *Camera) {
 		"copy",
 		"-r",
 		"10",
-		"-an",
+	}
+
+	if !c.Audio {
+		args = append(args, "-an")
+	}
+
+	args = append(
+		args,
 		//sets duration
 		"-to",
 		strconv.Itoa(int(duration.Seconds())),
+		"-movflags",
+		"+faststart",
 		path.Join(videosDir, dayDir, fileName),
-	}
+	)
 
 	p, err := os.StartProcess(
 		ffmpeg,
@@ -376,7 +399,8 @@ func record(ctx context.Context, c *Camera) {
 			},
 		},
 	)
-	// logger.Println(strings.Join(args, " "))
+
+	logger.Println(strings.Join(args, " "))
 
 	if err != nil {
 		logger.Printf("error running ffmpeg for %s - %s", c.Name, err)
@@ -384,7 +408,7 @@ func record(ctx context.Context, c *Camera) {
 		return
 	}
 
-	timeout := time.NewTimer(duration + (time.Second * 30))
+	timeout := time.NewTimer(duration + (time.Minute * 1))
 	defer timeout.Stop()
 
 	exited := make(chan struct{})
@@ -403,13 +427,16 @@ func record(ctx context.Context, c *Camera) {
 			p.Kill()
 		}
 		exited <- struct{}{}
+		exited <- struct{}{}
 	}()
 
 	go func() {
-		<-ctx.Done()
-		logger.Println("sending SIGTERM to ffmpeg process")
-		sigterm = true
-		p.Signal(syscall.SIGTERM)
+		select {
+		case <-ctx.Done():
+			logger.Println("sending SIGTERM to ffmpeg process of ", c.Name, "-", p.Signal(syscall.SIGTERM))
+			sigterm = true
+		case <-exited:
+		}
 	}()
 
 	select {
@@ -718,21 +745,31 @@ func run(ctx context.Context, cameras []Camera) {
 
 	go updater()
 
-	var wg sync.WaitGroup
+	done := make(chan struct{})
+	var running int32
+	var shouldExit bool
 
 	rec := make(chan *Camera)
+
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
+				shouldExit = true
 				return
 
 			case c := <-rec:
-				wg.Add(1)
 				c.healthy = true
 				go func() {
+					atomic.AddInt32(&running, 1)
 					record(ctx, c)
-					wg.Done()
+					result := atomic.AddInt32(&running, -1)
+					if shouldExit {
+						if result == 0 {
+							done <- struct{}{}
+						}
+						return
+					}
 					if c.healthy {
 						rec <- c
 						return
@@ -749,7 +786,7 @@ func run(ctx context.Context, cameras []Camera) {
 		rec <- &camera
 	}
 
-	wg.Wait()
+	<-done
 }
 
 const tpl = `
@@ -759,11 +796,13 @@ const tpl = `
 	<h3 style="color:blue">VigilantPI - Admin</h3>
 	<pre>Version: :version:</pre>
 
+	<pre>IP: :ip:</pre>
+
 	<br>
 	<a href="/videos/">Videos</a>
 	<hr>
 
-	<a href="/restart" onclick="confirm('Are you sure?')">Restart</a> | <a href="/reboot" onclick="confirm('Are you sure?')">Reboot OS</a> | <a href="/clearlog" onclick="confirm('Are you sure?')">Clear log</a>
+	<a href="/restart" onclick="return confirm('Are you sure?')">Restart</a> | <a href="/reboot" onclick="return confirm('Are you sure?')">Reboot OS</a> | <a href="/clearlog" onclick="return confirm('Are you sure?')">Clear log</a>
 
 
 	<h4>Server Date</h4>
@@ -848,6 +887,17 @@ func httpServer(addr, user, pass string) {
 			dfOption = serverDF()
 		}
 
+		var ipsA []string
+		ips, err := getLocalIP()
+		if err != nil {
+			logger.Printf("error getting local ip: %s", err)
+		}
+		for _, ip := range ips {
+			ipsA = append(ipsA, ip.String())
+		}
+
+		logger.Printf("local ip: %v", ipsA)
+
 		replacer := strings.NewReplacer(
 			":started:", started.Format(time.RubyDate),
 			":date:", serverDate(),
@@ -855,6 +905,7 @@ func httpServer(addr, user, pass string) {
 			":log:", serverLog(),
 			":config:", serverConfig(),
 			":version:", version,
+			":ip:", strings.Join(ipsA, ""),
 		)
 
 		w.Header().Set("Content-Type", "text/html")
@@ -968,11 +1019,8 @@ func restart() {
 
 func reboot() {
 	logger.Println("rebooting...")
-	_, err := exec.Command("reboot").Output()
-	if err != nil {
-		logger.Printf("error rebooting: %s", err)
-	}
-	os.Exit(0)
+	stop <- struct{}{}
+	shouldReboot = true
 }
 
 func tryRollback() {
@@ -1034,19 +1082,45 @@ func crond(entries []Cron) {
 }
 
 func mdnsServer() {
-	/*
-		host, _ := os.Hostname()
-		service, err := mdns.NewMDNSService(host, "_foobar._tcp", "", "", 80, nil, []string{"VigilantPI Admin"})
-		if err != nil {
-			logger.Printf("error NewMDNSService: %s", err)
-		}
+	ips, err := getLocalIP()
+	if err != nil {
+		logger.Printf("err getting ip for mdns: %s", err)
+		return
+	}
 
-		// Create the mDNS server, defer shutdown
-		server, err := mdns.NewServer(&mdns.Config{Zone: service})
-		if err != nil {
-			logger.Printf("error creating mdns server: %s", err)
+	host, _ := os.Hostname()
+
+	logger.Printf("starting mdns server for host: %s", host)
+
+	service, err := mdns.NewMDNSService(host, "_foobar._tcp", "", "", 80, ips, []string{"VigilantPI Admin"})
+	if err != nil {
+		logger.Printf("error NewMDNSService: %s", err)
+	}
+
+	// Create the mDNS server, defer shutdown
+	server, err := mdns.NewServer(&mdns.Config{Zone: service})
+	if err != nil {
+		logger.Printf("error creating mdns server: %s", err)
+	}
+	//defer server.Shutdown()
+	_ = server
+}
+
+func getLocalIP() (ips []net.IP, err error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, err
+	}
+	for _, address := range addrs {
+		// check the address type and if it is not a loopback the display it
+		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				ips = append(ips, ipnet.IP)
+			}
 		}
-		//defer server.Shutdown()
-		_ = server
-	*/
+	}
+	if len(addrs) == 0 {
+		err = errors.New("can't find any ip")
+	}
+	return
 }
