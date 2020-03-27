@@ -268,7 +268,7 @@ func main() {
 
 	go httpServer(c.Admin.Addr, c.Admin.User, c.Admin.Pass)
 
-	go mdnsServer()
+	//go mdnsServer()
 
 	if videosDir = c.VideosDir; videosDir == "" {
 		logger.Println("no videos_dir defined, using default value")
@@ -313,12 +313,22 @@ func main() {
 	cancel()
 
 	logger.Println("waiting recordings to finish")
-	<-finished
+	select {
+	case <-finished:
+	case <-time.NewTimer(time.Minute * 1).C:
+		logger.Println("waiting timeout, exiting")
+	}
 
-	logger.Println("finished")
+	go func() {
+		time.Sleep(time.Second * 1)
+		// force reboot on vigilantpid
+		os.Exit(2)
+	}()
 
 	if shouldReboot {
-		_, err := exec.Command("reboot").Output()
+		logger.Println("executing rebooting cmd...")
+		_, err := exec.Command("shutdown", "-r", "now").Output()
+		logger.Println("executed cmd...")
 		if err != nil {
 			logger.Printf("error rebooting: %s", err)
 		}
@@ -442,6 +452,9 @@ func record(ctx context.Context, c *Camera) {
 	select {
 	case <-timeout.C:
 		logger.Printf("recording process of %s has timeout. killing process...", c.Name)
+		p.Signal(syscall.SIGTERM)
+		sigterm = true
+		time.Sleep(time.Second * 5)
 		p.Signal(syscall.SIGKILL)
 		p.Kill()
 		return
@@ -802,7 +815,7 @@ const tpl = `
 	<a href="/videos/">Videos</a>
 	<hr>
 
-	<a href="/restart" onclick="return confirm('Are you sure?')">Restart</a> | <a href="/reboot" onclick="return confirm('Are you sure?')">Reboot OS</a> | <a href="/clearlog" onclick="return confirm('Are you sure?')">Clear log</a>
+	<a href="/restart" onclick="return confirm('Are you sure?')">Restart</a> | <a href="/reboot" onclick="return confirm('Are you sure?')">Reboot OS</a> | <a href="/force-reboot" style="color:red" onclick="return confirm('This may DAMAGE your system. Are you sure?')">Force Reboot OS</a> | <a href="/clearlog" onclick="return confirm('Are you sure?')">Clear log</a>
 
 
 	<h4>Server Date</h4>
@@ -834,6 +847,26 @@ func httpServer(addr, user, pass string) {
 	fs := http.FileServer(http.Dir(config.VideosDir))
 	http.Handle("/videos/", http.StripPrefix("/videos/", fs))
 
+	http.HandleFunc("/force-reboot", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-type", "text/html")
+		w.Write([]byte(`<!DOCTYPE html>
+		<html>
+		<body>
+		<h3 style="color:red">force rebooting... waiting 60 seconds...</h3>
+		<script>
+		setTimeout(function() {
+			window.location = "/";
+		}, 1000*60);
+		</script>		
+		</body>
+		</html>
+		`))
+		go func() {
+			time.Sleep(time.Second)
+			os.Exit(2)
+		}()
+	})
+
 	http.HandleFunc("/reboot", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-type", "text/html")
 		w.Write([]byte(`<!DOCTYPE html>
@@ -859,11 +892,11 @@ func httpServer(addr, user, pass string) {
 		w.Write([]byte(`<!DOCTYPE html>
 		<html>
 		<body>
-		<h3 style="color:blue">restarting... waiting 10 seconds...</h3>
+		<h3 style="color:blue">restarting...</h3>
 		<script>
 		setTimeout(function() {
 			window.location = "/";
-		}, 1000*10);
+		}, 1000*2);
 		</script>		
 		</body>
 		</html>
@@ -896,7 +929,7 @@ func httpServer(addr, user, pass string) {
 			ipsA = append(ipsA, ip.String())
 		}
 
-		logger.Printf("local ip: %v", ipsA)
+		//logger.Printf("local ip: %v", ipsA)
 
 		replacer := strings.NewReplacer(
 			":started:", started.Format(time.RubyDate),
@@ -1019,8 +1052,8 @@ func restart() {
 
 func reboot() {
 	logger.Println("rebooting...")
-	stop <- struct{}{}
 	shouldReboot = true
+	stop <- struct{}{}
 }
 
 func tryRollback() {
