@@ -231,6 +231,11 @@ var (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println(version)
+		return
+	}
+
 	kill := make(chan os.Signal, 1)
 	signal.Notify(kill, os.Interrupt, syscall.SIGTERM)
 	stop = make(chan struct{})
