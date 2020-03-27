@@ -1,0 +1,57 @@
+#!/bin/sh
+
+export CONFIG=/home/alarm/config.yaml
+LOG=/home/alarm/vigilantpi.log
+BIN_DIR=/home/alarm
+export PATH="$PATH:$BIN_DIR"
+
+
+checkupdate() {
+    echo checking for update
+    version=$(vigilantpi version)
+    res=$(curl -s https://api.github.com/repos/petersondmg/vigilantpi/releases/latest)
+
+    latest_version=$(echo "$res" | grep tag_name | cut -d\" -f4)
+    echo lastest release: $latest_version
+
+    if [ "$version" == "$latest_version" ]; then
+        echo no update available
+        return
+    fi
+
+    rm -rf $BIN_DIR/_update
+    echo downloading newer version $latest_version...
+    url=$(echo "$res" | grep "browser_download_url" | cut -d : -f 2,3 | cut -d\" -f2)
+    curl -Ls "$url" -o $BIN_DIR/vigilantpi.tar.gz \
+        && mkdir $BIN_DIR/_update \
+        && echo extracting update... \
+        && tar vxzf vigilantpi.tar.gz -C $BIN_DIR/_update \
+        && mv $BIN_DIR/_update/vigilantpi $BIN_DIR/vigilantpi_latest
+}
+
+(while true; do
+    checkupdate
+	
+    if [ -e $BIN_DIR/vigilantpi_latest ]; then
+        echo updating binary...
+
+        mv $BIN_DIR/vigilantpi $BIN_DIR/vigilantpi_bkp \
+            && mv $BIN_DIR/vigilantpi_latest $BIN_DIR/vigilantpi \
+            && echo updated... \
+            || echo error updating...
+    fi
+
+    echo starting vigilantpi
+
+	vigilantpi
+    if [ $? -eq 2 ]; then
+        echo exited with code 2. rebooting via sysrq
+        sleep 1
+        echo b > /proc/sysrq-trigger
+    fi
+
+	echo vigilantpi died. restarting
+
+	sleep 1
+
+done) >> $LOG 2>&1
