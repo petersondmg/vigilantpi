@@ -32,7 +32,7 @@ func crond(entries []Cron) {
 				}
 			}
 		}()
-		logger.Printf("%s scheduled to every %d", cron.Tasks, cron.Every)
+		logger.Printf("%s scheduled to every %s", cron.Tasks, cron.Every)
 	}
 }
 
