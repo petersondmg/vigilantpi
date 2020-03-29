@@ -1,0 +1,231 @@
+package main
+
+import (
+	"context"
+	"net/url"
+	"os"
+	"path"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/sparrc/go-ping"
+)
+
+// Camera ...
+type Camera struct {
+	Name       string `yaml:"name"`
+	URL        string `yaml:"url"`
+	Audio      bool   `yaml:"audio"`
+	PreRecURLs []Hook `yaml:"pre_rec_urls"`
+	healthy    bool
+}
+
+func (c *Camera) Unhealthy() {
+	c.healthy = false
+}
+
+func (c *Camera) Healthy() {
+	c.healthy = true
+}
+
+func (c *Camera) HealthCheck() func() {
+	p := func() {
+		u, err := url.Parse(c.URL)
+		if err != nil {
+			logger.Printf("error parsing camera (%s) url: %s", c.Name, err)
+			led.BadCamera()
+			return
+		}
+
+		pinger, err := ping.NewPinger(u.Hostname())
+		if err != nil {
+			logger.Printf("error trying to ping camera %s: %s", c.Name, err)
+			led.BadCamera()
+			return
+		}
+		pinger.SetPrivileged(true)
+
+		pinger.Count = 3
+		pinger.Timeout = time.Second * 15
+		pinger.Run()
+
+		stats := pinger.Statistics()
+		if stats.PacketsRecv < pinger.Count {
+			logger.Printf(
+				"camera %s in not responding. ping stats - sent: %d, recv: %d,    loss: %v%%",
+				c.Name,
+				stats.PacketsSent, stats.PacketsRecv, stats.PacketLoss,
+			)
+			led.BadCamera()
+			return
+		}
+		c.Healthy()
+
+		led.On()
+	}
+
+	t := time.NewTicker(time.Minute * 5)
+	stop := make(chan struct{})
+
+	go func() {
+		for {
+			select {
+			case <-t.C:
+				p()
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	return func() {
+		t.Stop()
+		stop <- struct{}{}
+	}
+}
+
+func (c *Camera) RunPreRecURLs() {
+	for _, h := range c.PreRecURLs {
+		h := h
+		h.Run()
+	}
+}
+
+const (
+	dayDirLayout = "rec_2006_01_02"
+)
+
+func record(ctx context.Context, c *Camera) {
+	start := time.Now()
+	dayDir := start.Format(dayDirLayout)
+	fileName := start.Format("15_04_05_") + c.Name + ".mp4"
+
+	if !hddIsMounted() {
+		logger.Println("can't record: hdd is not mounted")
+		led.BadHD()
+		tryMount()
+		return
+	}
+
+	var err error
+
+	recDir := path.Join(videosDir, dayDir)
+	if err = os.MkdirAll(recDir, 0774); err != nil {
+		logger.Printf("error creating recording directory %s: %s", recDir, err)
+		led.BadHD()
+		return
+	}
+
+	stopCheck := c.HealthCheck()
+	defer stopCheck()
+
+	c.RunPreRecURLs()
+
+	logger.Printf("recording %s...\n", c.Name)
+
+	args := []string{
+		ffmpeg,
+		"-nostdin",
+		"-nostats",
+		"-y",
+		"-r",
+		"10",
+		"-i",
+		c.URL,
+		"-c:v",
+		"copy",
+		"-r",
+		"10",
+	}
+
+	if !c.Audio {
+		args = append(args, "-an")
+	}
+
+	args = append(
+		args,
+		//sets duration
+		"-to",
+		strconv.Itoa(int(duration.Seconds())),
+		"-movflags",
+		"+faststart",
+		path.Join(videosDir, dayDir, fileName),
+	)
+
+	p, err := os.StartProcess(
+		ffmpeg,
+		args,
+		&os.ProcAttr{
+			Env: os.Environ(),
+
+			Files: []*os.File{
+				nil,
+				nil, // os.Stdout,
+				nil, // os.Stdout,
+			},
+		},
+	)
+
+	logger.Println(strings.Join(args, " "))
+
+	if err != nil {
+		logger.Printf("error running ffmpeg for %s - %s", c.Name, err)
+		led.BadCamera()
+		return
+	}
+
+	timeout := time.NewTimer(duration + (time.Minute * 1))
+	defer timeout.Stop()
+
+	exited := make(chan struct{})
+
+	var sigterm bool
+
+	go func() {
+		state, err := p.Wait()
+		if err != nil {
+			logger.Printf("error getting proccess state %s - %s", c.Name, err)
+			return
+		}
+		if !sigterm && !state.Exited() {
+			logger.Printf("p.Wait() returned but process hasn't exited for %s. killing process...", c.Name)
+			p.Signal(syscall.SIGKILL)
+			p.Kill()
+		}
+		exited <- struct{}{}
+		exited <- struct{}{}
+	}()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			logger.Println("sending SIGTERM to ffmpeg process of ", c.Name, "-", p.Signal(syscall.SIGTERM))
+			sigterm = true
+		case <-exited:
+		}
+	}()
+
+	select {
+	case <-timeout.C:
+		logger.Printf("recording process of %s has timeout. killing process...", c.Name)
+		p.Signal(syscall.SIGTERM)
+		sigterm = true
+		time.Sleep(time.Second * 5)
+		p.Signal(syscall.SIGKILL)
+		p.Kill()
+		return
+
+	case <-exited:
+	}
+
+	took := time.Now().Sub(start)
+	logger.Printf("recording %s took %s\n", c.Name, took)
+
+	if took < minVideoDuration-10*time.Second {
+		logger.Printf("camera %s is unhealthy", c.Name)
+		led.BadCamera()
+		c.Unhealthy()
+	}
+}
