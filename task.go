@@ -86,7 +86,9 @@ func (t *Task) run() {
 		if err != nil {
 			logger.Printf("error executing command task %s: %s", t.Name, err)
 		}
-		logger.Print(string(out))
+		if s := string(out); s != "" {
+			logger.Print(s)
+		}
 	}
 	if t.Request != nil {
 		if err := t.Request.do(); err != nil {

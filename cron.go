@@ -22,10 +22,9 @@ func crond(entries []Cron) {
 	for _, cron := range entries {
 		cron := cron
 		go func() {
-			for now := range time.Tick(cron.Every) {
+			for range time.Tick(cron.Every) {
 				for _, taskName := range cron.Tasks {
 					if task, ok := taskByName[taskName]; ok {
-						logger.Printf("running cron task %s at %v", taskName, now)
 						task.Run()
 						continue
 					}
@@ -33,6 +32,7 @@ func crond(entries []Cron) {
 				}
 			}
 		}()
+		logger.Printf("%s scheduled to every %d", cron.Tasks, cron.Every)
 	}
 }
 

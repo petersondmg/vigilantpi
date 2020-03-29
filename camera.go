@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -184,7 +183,7 @@ func record(ctx context.Context, c *Camera) {
 		},
 	)
 
-	logger.Println(strings.Join(args, " "))
+	//logger.Println(strings.Join(args, " "))
 
 	if err != nil {
 		logger.Printf("error running ffmpeg for %s - %s", c.Name, err)
