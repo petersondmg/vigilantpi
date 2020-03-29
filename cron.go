@@ -9,32 +9,34 @@ import (
 
 // Cron ...
 type Cron struct {
-	Every []time.Duration `yaml:"every"`
-	At    []time.Time     `yaml:"at"`
-	Hooks []Hook          `yaml:"hooks"`
+	Every time.Duration `yaml:"every"`
+	//At    time.Time     `yaml:"at"`
+	Tasks []string `yaml:"tasks"`
 }
 
 func crond(entries []Cron) {
 	if len(entries) == 0 {
 		return
 	}
-	logger.Println("setuping cron hooks")
+	logger.Println("setuping cron")
 	for _, cron := range entries {
 		cron := cron
-		for _, d := range cron.Every {
-			go func() {
-				for now := range time.Tick(d) {
-					for _, h := range cron.Hooks {
-						logger.Printf("running cron %s at %v", h.Description, now)
-						h.Run()
+		go func() {
+			for now := range time.Tick(cron.Every) {
+				for _, taskName := range cron.Tasks {
+					if task, ok := taskByName[taskName]; ok {
+						logger.Printf("running cron task %s at %v", taskName, now)
+						task.Run()
+						continue
 					}
+					logger.Printf("invalid cron task. task %s was not declared", taskName)
 				}
-			}()
-		}
+			}
+		}()
 	}
 }
 
-func every24Hours() {
+func oldFilesWatcher() {
 	ticker := time.NewTicker(24 * time.Hour)
 	deleteOldStuff := func() {
 		logger.Println("veryfing old content")

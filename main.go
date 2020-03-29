@@ -4,15 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"sync/atomic"
 	"syscall"
 	"time"
-
-	"gopkg.in/yaml.v2"
 )
 
 const (
@@ -40,10 +37,6 @@ var (
 	}
 	mountedDir string
 	mountDev   string
-
-	preRecClient = http.Client{
-		Timeout: time.Second * 60,
-	}
 
 	started = time.Now()
 
@@ -73,58 +66,40 @@ func main() {
 
 	logger.Printf("VigilantPI version: %s", version)
 
-	if configPath = os.Getenv("CONFIG"); configPath == "" {
-		logger.Println("no CONFIG env, using default value")
-		configPath = "./config.yaml"
-	}
-	f, err := os.Open(configPath)
-	if err != nil {
-		logger.Printf("error reading config.yaml: %s", err)
-		tryRollback()
-		panic(err)
-	}
+	loadConfig()
 
-	c := new(Config)
-	err = yaml.NewDecoder(f).Decode(c)
-	f.Close()
-	if err != nil {
-		logger.Printf("error parsing config.yaml: %s", err)
-		tryRollback()
-		panic(err)
-	}
+	config.Tasks.Init()
 
-	config = c
-
-	go httpServer(c.Admin.Addr, c.Admin.User, c.Admin.Pass)
+	go httpServer(config.Admin.Addr, config.Admin.User, config.Admin.Pass)
 
 	//go mdnsServer()
 
-	if videosDir = c.VideosDir; videosDir == "" {
+	if videosDir = config.VideosDir; videosDir == "" {
 		logger.Println("no videos_dir defined, using default value")
 		videosDir = "./cameras"
 	}
 
-	if ffmpeg = c.FFMPEG; ffmpeg == "" {
+	if ffmpeg = config.FFMPEG; ffmpeg == "" {
 		logger.Println("ffmpeg path undifined, using default value")
 		ffmpeg = "/usr/local/bin/ffmpeg"
 	}
 
-	if duration = c.Duration; duration == 0 {
+	if duration = config.Duration; duration == 0 {
 		logger.Println("no duration defined, using default value")
 		duration = time.Hour * 1
 	}
 
 	logger.Printf("videos duration: %s", duration)
 
-	if c.RaspberryPI.LEDPin > 0 {
-		unmapGPIO := setupLED(c.RaspberryPI.LEDPin)
+	if config.RaspberryPI.LEDPin > 0 {
+		unmapGPIO := setupLED(config.RaspberryPI.LEDPin)
 		defer unmapGPIO()
 	}
 
 	led.BadHD()
 
-	mountedDir = safeShell(c.MountDir)
-	mountDev = safeShell(c.MountDev)
+	mountedDir = safeShell(config.MountDir)
+	mountDev = safeShell(config.MountDev)
 
 	logger.Println("started!")
 
@@ -132,11 +107,11 @@ func main() {
 
 	finished := make(chan struct{})
 	go func() {
-		run(ctx, c.Cameras)
+		run(ctx, config.Cameras)
 		finished <- struct{}{}
 	}()
 
-	go crond(c.Cron)
+	go crond(config.Cron)
 
 	<-stop
 	cancel()
@@ -185,7 +160,7 @@ func run(ctx context.Context, cameras []Camera) {
 
 	led.On()
 
-	go every24Hours()
+	go oldFilesWatcher()
 
 	done := make(chan struct{})
 	var running int32

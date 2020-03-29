@@ -40,6 +40,8 @@ type Config struct {
 	WifiPass string `yaml:"wifi_pass"`
 
 	Cron []Cron `yaml:"cron"`
+
+	Tasks Tasks `yaml:"tasks"`
 }
 
 func updateConfig() {
@@ -148,4 +150,28 @@ func tryRollback() {
 func serverConfig() string {
 	b, _ := yaml.Marshal(config)
 	return string(b)
+}
+
+func loadConfig() {
+	if configPath = os.Getenv("CONFIG"); configPath == "" {
+		logger.Println("no CONFIG env, using default value")
+		configPath = "./config.yaml"
+	}
+	f, err := os.Open(configPath)
+	if err != nil {
+		logger.Printf("error reading config.yaml: %s", err)
+		tryRollback()
+		panic(err)
+	}
+
+	c := new(Config)
+	err = yaml.NewDecoder(f).Decode(c)
+	f.Close()
+	if err != nil {
+		logger.Printf("error parsing config.yaml: %s", err)
+		tryRollback()
+		panic(err)
+	}
+
+	config = c
 }

@@ -21,50 +21,39 @@ prevent_hdd_spindown: true
 
 videos_dir: /mnt/hdd/cameras
 
-duration: 10m
+duration: 30m
 
 cameras:
 - name: fundo_hall
   url: rtsp://192.168.10.104:10554/udp/av0_1
-  pre_rec_urls:
-  # posicao 0
-  - url: http://192.168.10.104/decoder_control.cgi?loginuse=admin&loginpas=admin&command=31&onestep=0&sit=31
-    basic_user: admin
-    basic_pass: admin
-    method: get
-    headers:
-    expect: result="ok"
 
 - name: palco
   url: rtsp://192.168.10.109:10554/udp/av0_1
-  pre_rec_urls:
-  # camera invertida
-  - url: http://192.168.10.109/camera_control.cgi?loginuse=admin&loginpas=admin&param=5&value=3
-    basic_user: admin
-    basic_pass: admin
-    method: get
-    headers:
-    expect: result="ok"
-  # posicao 0
-  - url: http://192.168.10.109/decoder_control.cgi?loginuse=admin&loginpas=admin&command=31&onestep=0&sit=31
-    basic_user: admin
-    basic_pass: admin
-    method: get
-    headers:
-    expect: result="ok"
+  before_rec:
+  - say_starting
+  after_rec:
+  - say_finished
 
 cron:
-- every: [6h]
-  hooks:
-  - url: http://192.168.10.104/reboot.cgi?&loginuse=admin&loginpas=admin
+- every: 6h
+  tasks:
+  - reboot_camera_fundo_all
+  - reboot_camera_palco
+
+tasks:
+- name: reboot_camera_fundo_hall
+  request:
+    url: http://192.168.10.104/reboot.cgi?&loginuse=admin&loginpas=admin
     basic_user: admin
     basic_pass: admin
     method: get
     headers:
     expect: result="ok"
     desc: reboot camera fundo_hall
-
-  - url: http://192.168.10.109/reboot.cgi?&loginuse=admin&loginpas=admin&user=admin
+  
+- name: reboot_camera_palco
+  request:
+    url: http://192.168.10.109/reboot.cgi?&loginuse=admin&loginpas=admin&user=admin
     basic_user: admin
     basic_pass: admin
     method: get
@@ -72,10 +61,13 @@ cron:
     expect: result="ok"
     desc: reboot camera palco
 
-daily_backup:
-  scp_url:
+- name: say_starting
+  command: |
+    echo starting recording
 
-loki_url:
+- name: say_finished
+  command: |
+    echo finished recording
 
 # raspberry pi only!!!
 raspberry_pi:

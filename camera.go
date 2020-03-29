@@ -15,11 +15,12 @@ import (
 
 // Camera ...
 type Camera struct {
-	Name       string `yaml:"name"`
-	URL        string `yaml:"url"`
-	Audio      bool   `yaml:"audio"`
-	PreRecURLs []Hook `yaml:"pre_rec_urls"`
-	healthy    bool
+	Name     string   `yaml:"name"`
+	URL      string   `yaml:"url"`
+	Audio    bool     `yaml:"audio"`
+	PreRec   []string `yaml:"pre_rec"`
+	AfterRec []string `yaml:"after_rec"`
+	healthy  bool
 }
 
 func (c *Camera) Unhealthy() {
@@ -86,10 +87,25 @@ func (c *Camera) HealthCheck() func() {
 	}
 }
 
-func (c *Camera) RunPreRecURLs() {
-	for _, h := range c.PreRecURLs {
-		h := h
-		h.Run()
+func (c *Camera) RunPreRecTasks() {
+	for _, taskName := range c.PreRec {
+		task, ok := taskByName[taskName]
+		if !ok {
+			logger.Printf("invalid pre_rec task %s", taskName)
+			continue
+		}
+		task.Run()
+	}
+}
+
+func (c *Camera) RunAfterRecTasks() {
+	for _, taskName := range c.PreRec {
+		task, ok := taskByName[taskName]
+		if !ok {
+			logger.Printf("invalid pre_rec task %s", taskName)
+			continue
+		}
+		task.Run()
 	}
 }
 
@@ -121,7 +137,7 @@ func record(ctx context.Context, c *Camera) {
 	stopCheck := c.HealthCheck()
 	defer stopCheck()
 
-	c.RunPreRecURLs()
+	c.RunPreRecTasks()
 
 	logger.Printf("recording %s...\n", c.Name)
 
@@ -228,4 +244,6 @@ func record(ctx context.Context, c *Camera) {
 		led.BadCamera()
 		c.Unhealthy()
 	}
+
+	c.RunAfterRecTasks()
 }
