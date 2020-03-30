@@ -82,7 +82,7 @@ func (t *RequestTask) do() error {
 
 func (t *Task) run() {
 	if t.Command != nil {
-		out, err := exec.Command("bash", "-c", *t.Command).Output()
+		out, err := exec.Command("bash", "-c", replaceWithConf(*t.Command)).Output()
 		if err != nil {
 			logger.Printf("error executing command task %s: %s", t.Name, err)
 		}

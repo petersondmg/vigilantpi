@@ -1,8 +1,11 @@
 package main
 
 import (
+	"net/url"
 	"os"
 	"path"
+	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -174,4 +177,58 @@ func loadConfig() {
 	}
 
 	config = c
+	confReplacement()
+}
+
+var (
+	confReplacer map[string]string
+)
+
+func confReplacement() {
+	confReplacer = make(map[string]string)
+
+	for _, c := range config.Cameras {
+		key := func(k string) string {
+			return "cameras." + c.Name + "." + k
+		}
+		confReplacer[key("name")] = c.Name
+		confReplacer[key("url.raw")] = c.URL
+		u, _ := url.Parse(c.URL)
+		if u == nil {
+			continue
+		}
+
+		confReplacer[key("url")] = u.String()
+		confReplacer[key("url.scheme")] = u.Scheme
+		confReplacer[key("url.host")] = u.Host
+		confReplacer[key("url.query")] = u.RawQuery
+		confReplacer[key("url.hostname")] = u.Hostname()
+		confReplacer[key("url.request_uri")] = u.RequestURI()
+
+		if u.User == nil {
+			continue
+		}
+		confReplacer[key("url.username")] = u.User.Username()
+		confReplacer[key("url.password")], _ = u.User.Password()
+	}
+}
+
+var (
+	confReplaceRE = regexp.MustCompile(`\$\{\{ *([^}])+ *\}\}`)
+)
+
+func replaceWithConf(str string) string {
+	now := time.Now()
+	confReplacer["_now"] = now.Format("2006_01_02_15_04_05")
+	confReplacer["now"] = now.Format("2006-01-02 15:04:05")
+
+	return confReplaceRE.ReplaceAllStringFunc(str, func(token string) string {
+		key := strings.Trim(token, "${{}} ")
+		val, ok := confReplacer[key]
+		if !ok {
+			logger.Printf("bad substitution. key %s doesn't exists", key)
+			return token
+		}
+		return val
+	})
 }
