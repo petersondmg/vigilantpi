@@ -101,7 +101,7 @@ func httpServer(addr, user, pass string) {
 		<script>
 		setTimeout(function() {
 			window.location = "/";
-		}, 1000*2);
+		}, 1000*8);
 		</script>		
 		</body>
 		</html>

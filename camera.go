@@ -12,6 +12,10 @@ import (
 	"github.com/sparrc/go-ping"
 )
 
+const (
+	minVideoDuration = time.Second * 50
+)
+
 // Camera ...
 type Camera struct {
 	Name     string   `yaml:"name"`
@@ -112,7 +116,7 @@ const (
 	dayDirLayout = "rec_2006_01_02"
 )
 
-func record(ctx context.Context, c *Camera) {
+func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 	start := time.Now()
 	dayDir := start.Format(dayDirLayout)
 	fileName := start.Format("15_04_05_") + c.Name + ".mp4"
@@ -138,7 +142,9 @@ func record(ctx context.Context, c *Camera) {
 
 	c.RunPreRecTasks()
 
-	logger.Printf("recording %s...\n", c.Name)
+	if c.healthy {
+		logger.Printf("recording %s...\n", c.Name)
+	}
 
 	args := []string{
 		ffmpeg,
@@ -191,7 +197,7 @@ func record(ctx context.Context, c *Camera) {
 		return
 	}
 
-	timeout := time.NewTimer(duration + (time.Minute * 1))
+	timeout := time.NewTimer(duration + (time.Minute * 5))
 	defer timeout.Stop()
 
 	exited := make(chan struct{})
@@ -223,11 +229,15 @@ func record(ctx context.Context, c *Camera) {
 	}()
 
 	select {
+	case <-time.After(duration + (time.Minute * 1)):
+		logger.Printf("still processing %s...", c.Name)
+		stillProcessing <- struct{}{}
+
 	case <-timeout.C:
 		logger.Printf("recording process of %s has timeout. killing process...", c.Name)
 		p.Signal(syscall.SIGTERM)
 		sigterm = true
-		time.Sleep(time.Second * 5)
+		time.Sleep(time.Second * 1)
 		p.Signal(syscall.SIGKILL)
 		p.Kill()
 		return
@@ -236,12 +246,19 @@ func record(ctx context.Context, c *Camera) {
 	}
 
 	took := time.Now().Sub(start)
-	logger.Printf("recording %s took %s\n", c.Name, took)
 
-	if took < minVideoDuration-10*time.Second {
-		logger.Printf("camera %s is unhealthy", c.Name)
+	if took < minVideoDuration {
+		if c.healthy {
+			logger.Printf("camera %s is unhealthy. recording took %s", c.Name, took)
+		}
 		led.BadCamera()
 		c.Unhealthy()
+	} else {
+		c.Healthy()
+	}
+
+	if c.healthy {
+		logger.Printf("recording %s took %s\n", c.Name, took)
 	}
 
 	c.RunAfterRecTasks()

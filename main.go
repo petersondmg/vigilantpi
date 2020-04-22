@@ -13,8 +13,7 @@ import (
 )
 
 const (
-	logPath          = "/home/alarm/vigilantpi.log"
-	minVideoDuration = time.Minute * 1
+	logPath = "/home/alarm/vigilantpi.log"
 )
 
 var (
@@ -176,10 +175,40 @@ func run(ctx context.Context, cameras []Camera) {
 				return
 
 			case c := <-rec:
-				c.healthy = true
 				go func() {
 					atomic.AddInt32(&running, 1)
-					record(ctx, c)
+
+					stillProcessing := make(chan struct{})
+					recordingFinished := make(chan struct{})
+
+					released := false
+					release := func() {
+						if released {
+							return
+						}
+						released = true
+						rec <- c
+					}
+
+					go func() {
+						record(ctx, c, stillProcessing)
+						recordingFinished <- struct{}{}
+						recordingFinished <- struct{}{}
+					}()
+
+					go func() {
+						select {
+						case <-stillProcessing:
+							if c.healthy && !shouldExit {
+								release()
+							}
+
+						case <-recordingFinished:
+						}
+					}()
+
+					<-recordingFinished
+
 					result := atomic.AddInt32(&running, -1)
 					if shouldExit {
 						if result == 0 {
@@ -188,11 +217,11 @@ func run(ctx context.Context, cameras []Camera) {
 						return
 					}
 					if c.healthy {
-						rec <- c
+						release()
 						return
 					}
-					time.Sleep(time.Minute * 5)
-					rec <- c
+					time.Sleep(time.Second * 10)
+					release()
 				}()
 			}
 		}
@@ -200,6 +229,7 @@ func run(ctx context.Context, cameras []Camera) {
 
 	for _, camera := range cameras {
 		camera := camera
+		camera.Healthy()
 		rec <- &camera
 	}
 
