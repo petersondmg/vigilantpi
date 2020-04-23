@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"strconv"
 	"syscall"
@@ -16,6 +18,12 @@ const (
 	minVideoDuration = time.Second * 50
 )
 
+var cameraByName map[string]*Camera
+
+func init() {
+	cameraByName = make(map[string]*Camera)
+}
+
 // Camera ...
 type Camera struct {
 	Name     string   `yaml:"name"`
@@ -24,6 +32,21 @@ type Camera struct {
 	PreRec   []string `yaml:"pre_rec"`
 	AfterRec []string `yaml:"after_rec"`
 	healthy  bool
+}
+
+func (c *Camera) Snapshot() (string, error) {
+	dir := path.Join(videosDir, "snapshots")
+	if err := os.MkdirAll(dir, 0774); err != nil {
+		return "", err
+	}
+
+	file := fmt.Sprintf("%s/%s_%s.jpg", dir, c.Name, time.Now().Format("2006_01_02_15_04_05"))
+	const cmd = `ffmpeg -y -i '%s' -ss 00:00:01.500 -f image2 -vframes 1 '%s' 2>/dev/null`
+	out, err := exec.Command("bash", "-c", fmt.Sprintf(cmd, c.URL, file)).Output()
+	if err != nil {
+		return "", fmt.Errorf("err: %s - out: %s", err, out)
+	}
+	return file, nil
 }
 
 func (c *Camera) Unhealthy() {

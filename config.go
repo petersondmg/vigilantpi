@@ -45,6 +45,8 @@ type Config struct {
 	Cron []Cron `yaml:"cron"`
 
 	Tasks Tasks `yaml:"tasks"`
+
+	TelegramBotToken string `yaml:"telegram_bot_token"`
 }
 
 func updateConfig() {

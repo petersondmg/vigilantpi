@@ -161,6 +161,8 @@ func run(ctx context.Context, cameras []Camera) {
 
 	go oldFilesWatcher()
 
+	go telegramBot()
+
 	done := make(chan struct{})
 	var running int32
 	var shouldExit bool
@@ -230,6 +232,7 @@ func run(ctx context.Context, cameras []Camera) {
 	for _, camera := range cameras {
 		camera := camera
 		camera.Healthy()
+		cameraByName[camera.Name] = &camera
 		rec <- &camera
 	}
 

@@ -16,5 +16,6 @@ require (
 	golang.org/x/tools v0.0.0-20200327195553-82bb89366a1e // indirect
 	gopkg.in/alecthomas/kingpin.v3-unstable v3.0.0-20191105091915-95d230a53780 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
+	gopkg.in/tucnak/telebot.v2 v2.0.0-20200416071717-f096d2b1adbc
 	gopkg.in/yaml.v2 v2.2.8
 )
