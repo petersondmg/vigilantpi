@@ -46,7 +46,10 @@ type Config struct {
 
 	Tasks Tasks `yaml:"tasks"`
 
-	TelegramBotToken string `yaml:"telegram_bot_token"`
+	TelegramBot struct {
+		Token string   `yaml:"token"`
+		Users []string `yaml:"users"`
+	} `yaml:"telegram_bot"`
 }
 
 func updateConfig() {

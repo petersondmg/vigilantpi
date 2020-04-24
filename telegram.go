@@ -12,8 +12,53 @@ import (
 )
 
 func telegramBot() {
-	if config.TelegramBotToken == "" {
+	if config.TelegramBot.Token == "" {
 		return
+	}
+
+	filter := func(update *tb.Update) bool {
+		return true
+	}
+
+	if l := len(config.TelegramBot.Users); l != 0 {
+		allowed := make(map[string]struct{}, l)
+		for _, user := range config.TelegramBot.Users {
+			allowed[user] = struct{}{}
+		}
+
+		filter = func(update *tb.Update) bool {
+			var m *tb.Message
+			switch {
+			case update.Message != nil:
+				m = update.Message
+			case update.EditedMessage != nil:
+				m = update.EditedMessage
+			case update.ChannelPost != nil:
+				m = update.ChannelPost
+			case update.EditedChannelPost != nil:
+				m = update.EditedChannelPost
+			}
+
+			if m == nil {
+				logger.Printf("nil telegram message, not allowed")
+				return false
+			}
+
+			var user string
+			if m.Chat != nil {
+				user = m.Chat.Username
+			}
+			if m.Sender != nil {
+				user = m.Sender.Username
+			}
+
+			_, ok := allowed[user]
+			if !ok {
+				logger.Printf("access denied for user %s", user)
+				return false
+			}
+			return ok
+		}
 	}
 
 	var errLogged bool
@@ -21,8 +66,13 @@ func telegramBot() {
 	for {
 		func() {
 			b, err := tb.NewBot(tb.Settings{
-				Token:    config.TelegramBotToken,
-				Poller:   &tb.LongPoller{Timeout: 5 * time.Second},
+				Token: config.TelegramBot.Token,
+				Poller: &tb.MiddlewarePoller{
+					Poller: &tb.LongPoller{
+						Timeout: 5 * time.Second,
+					},
+					Filter: filter,
+				},
 				Reporter: func(_ error) {},
 			})
 
