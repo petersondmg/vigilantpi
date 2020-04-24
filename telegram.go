@@ -21,8 +21,9 @@ func telegramBot() {
 	for {
 		func() {
 			b, err := tb.NewBot(tb.Settings{
-				Token:  config.TelegramBotToken,
-				Poller: &tb.LongPoller{Timeout: 5 * time.Second},
+				Token:    config.TelegramBotToken,
+				Poller:   &tb.LongPoller{Timeout: 5 * time.Second},
+				Reporter: func(_ error) {},
 			})
 
 			if err != nil {
