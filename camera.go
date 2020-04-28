@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sparrc/go-ping"
+	ping "github.com/sparrc/go-ping"
 )
 
 const (
@@ -88,7 +88,7 @@ func (c *Camera) HealthCheck() func() {
 			led.BadCamera()
 			return
 		}
-		c.Healthy()
+		//c.Healthy()
 
 		led.On()
 	}
@@ -146,6 +146,7 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 
 	if !hddIsMounted() {
 		logger.Println("can't record: hdd is not mounted")
+		telegramNotify("error: HD is not working")
 		led.BadHD()
 		tryMount()
 		return
@@ -273,10 +274,14 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 	if took < minVideoDuration {
 		if c.healthy {
 			logger.Printf("camera %s is unhealthy. recording took %s", c.Name, took)
+			telegramNotifyf("error: camera %s is not recording", c.Name)
 		}
 		led.BadCamera()
 		c.Unhealthy()
 	} else {
+		if !c.healthy {
+			telegramNotifyf("camera %s is now recording", c.Name)
+		}
 		c.Healthy()
 	}
 

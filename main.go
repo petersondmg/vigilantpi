@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"vigilantpi/db"
 )
 
 const (
@@ -100,7 +102,22 @@ func main() {
 	mountedDir = safeShell(config.MountDir)
 	mountDev = safeShell(config.MountDev)
 
+	vigilantDB := os.Getenv("DB")
+	if vigilantDB == "" {
+		vigilantDB = "/home/alarm/vigilantdb.json"
+	}
+
+	if err := db.Init(vigilantDB); err != nil {
+		logger.Printf("error opening .json database: %s", err)
+	}
+	defer db.Close()
+
 	logger.Println("started!")
+	go telegramBot()
+	go func() {
+		time.Sleep(time.Second * 30)
+		telegramNotifyf("VigilantPI started at %s", started)
+	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -160,8 +177,6 @@ func run(ctx context.Context, cameras []Camera) {
 	led.On()
 
 	go oldFilesWatcher()
-
-	go telegramBot()
 
 	done := make(chan struct{})
 	var running int32
