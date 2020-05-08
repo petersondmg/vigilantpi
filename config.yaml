@@ -23,6 +23,8 @@ videos_dir: /mnt/hdd/cameras
 
 duration: 30m
 
+delete_after_days: 20
+
 cameras:
 - name: fundo_hall
   url: rtsp://192.168.10.104:10554/udp/av0_1

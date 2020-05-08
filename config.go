@@ -28,7 +28,7 @@ type Config struct {
 	Duration  time.Duration `yaml:"duration"`
 	Cameras   []Camera      `yaml:"cameras"`
 
-	LokiURL string `yaml:"loki_url"`
+	DeleteAfterDays int `yaml:"delete_after_days"`
 
 	DailyBackup struct {
 		ScpURL    string `yaml:"scp_url"`

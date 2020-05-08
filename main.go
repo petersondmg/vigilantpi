@@ -176,7 +176,7 @@ func run(ctx context.Context, cameras []Camera) {
 
 	led.On()
 
-	go oldFilesWatcher()
+	go oldFilesWatcher(config.DeleteAfterDays)
 
 	done := make(chan struct{})
 	var running int32

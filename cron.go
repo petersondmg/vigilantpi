@@ -36,8 +36,12 @@ func crond(entries []Cron) {
 	}
 }
 
-func oldFilesWatcher() {
-	ticker := time.NewTicker(24 * time.Hour)
+func oldFilesWatcher(days int) {
+	if days <= 0 {
+		days = 20
+	}
+
+	ticker := time.NewTicker(6 * time.Hour)
 	deleteOldStuff := func() {
 		logger.Println("veryfing old content")
 		files, err := ioutil.ReadDir(videosDir)
@@ -46,8 +50,8 @@ func oldFilesWatcher() {
 			return
 		}
 
-		oneMonthAgo := time.Now().AddDate(0, -1, 0)
-		logger.Println("deleting files older than", oneMonthAgo.Format("02/01/2006"))
+		periodAgo := time.Now().AddDate(0, 0, -days)
+		logger.Println("deleting files older than", periodAgo.Format("02/01/2006"))
 
 		for _, f := range files {
 			if !f.IsDir() {
@@ -57,7 +61,7 @@ func oldFilesWatcher() {
 			if err != nil {
 				continue
 			}
-			if !fileTime.Before(oneMonthAgo) {
+			if !fileTime.Before(periodAgo) {
 				continue
 			}
 			go func(path string) {
