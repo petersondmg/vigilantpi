@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/hashicorp/mdns"
 )
@@ -50,4 +51,16 @@ func getLocalIP() (ips []net.IP, err error) {
 		err = errors.New("can't find any ip")
 	}
 	return
+}
+
+func localIP() string {
+	var ipsA []string
+	ips, err := getLocalIP()
+	if err != nil {
+		logger.Printf("error getting local ip: %s", err)
+	}
+	for _, ip := range ips {
+		ipsA = append(ipsA, ip.String())
+	}
+	return strings.Join(ipsA, "")
 }

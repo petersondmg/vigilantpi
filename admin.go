@@ -125,15 +125,6 @@ func httpServer(addr, user, pass string) {
 			dfOption = serverDF()
 		}
 
-		var ipsA []string
-		ips, err := getLocalIP()
-		if err != nil {
-			logger.Printf("error getting local ip: %s", err)
-		}
-		for _, ip := range ips {
-			ipsA = append(ipsA, ip.String())
-		}
-
 		//logger.Printf("local ip: %v", ipsA)
 
 		replacer := strings.NewReplacer(
@@ -143,7 +134,7 @@ func httpServer(addr, user, pass string) {
 			":log:", serverLog(),
 			":config:", serverConfig(),
 			":version:", version,
-			":ip:", strings.Join(ipsA, ""),
+			":ip:", localIP(),
 		)
 
 		w.Header().Set("Content-Type", "text/html")

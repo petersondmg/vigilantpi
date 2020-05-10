@@ -114,10 +114,8 @@ func main() {
 
 	logger.Println("started!")
 	go telegramBot()
-	go func() {
-		time.Sleep(time.Second * 30)
-		telegramNotifyf("VigilantPI started at %s", started)
-	}()
+
+	telegramNotifyf("VigilantPI started at %s", started.Format("15:04:05 - 02/01/2006"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -247,6 +245,7 @@ func run(ctx context.Context, cameras []Camera) {
 	for _, camera := range cameras {
 		camera := camera
 		camera.Healthy()
+		camera.SetupMotionDetection()
 		cameraByName[camera.Name] = &camera
 		rec <- &camera
 	}

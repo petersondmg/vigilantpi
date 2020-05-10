@@ -14,21 +14,61 @@ import (
 )
 
 var (
-	b *tb.Bot
+	b         *tb.Bot
+	notifyCh  chan TelegramNotification
+	customCMD map[string]func(m *tb.Message)
 )
 
-func telegramNotify(str string) {
-	telegramNotifyf(str)
+func init() {
+	const queueSize = 20
+	notifyCh = make(chan TelegramNotification, 20)
+	customCMD = make(map[string]func(m *tb.Message))
+}
+
+type TelegramNotification struct {
+	Text   string
+	Images []string
+}
+
+func sendNotifications() {
+	for {
+		if b == nil {
+			time.Sleep(time.Second * 10)
+			continue
+		}
+		for msg := range notifyCh {
+			photos := make([]*tb.Photo, len(msg.Images))
+			for i, file := range msg.Images {
+				photos[i] = &tb.Photo{File: tb.FromDisk(file)}
+			}
+
+			for _, sid := range db.GetArray("monitors", "user-monitors") {
+				id, _ := strconv.Atoi(sid)
+				chat := &tb.Chat{ID: int64(id)}
+				b.Send(chat, msg.Text)
+				for _, p := range photos {
+					b.Send(chat, p)
+				}
+			}
+		}
+	}
+}
+
+func telegramNotify(msg TelegramNotification) {
+	if config.TelegramBot.Token == "" {
+		return
+	}
+	select {
+	case notifyCh <- msg:
+	default:
+		logger.Printf("telegram queue is full, can't send %v", msg)
+	}
 }
 
 func telegramNotifyf(format string, a ...interface{}) {
-	if config.TelegramBot.Token == "" || b == nil {
-		return
-	}
-	for _, sid := range db.GetArray("monitors", "user-monitors") {
-		id, _ := strconv.Atoi(sid)
-		b.Send(&tb.Chat{ID: int64(id)}, fmt.Sprintf(format, a...))
-	}
+	telegramNotify(TelegramNotification{
+		Text: fmt.Sprintf(format, a...),
+	})
 }
 
 func telegramBot() {
@@ -134,8 +174,12 @@ func telegramBot() {
 		var cmds []string
 		c := func(cmd string) string {
 			cmds = append(cmds, "👉 "+cmd)
-
 			return cmd
+		}
+		custom := func(cmd string, h func(m *tb.Message)) {
+			c(cmd)
+			customCMD[cmd] = h
+			b.Handle(cmd, h)
 		}
 
 		b.Handle(tb.OnAddedToGroup, func(m *tb.Message) {
@@ -188,23 +232,25 @@ func telegramBot() {
 		})
 
 		b.Handle(c("/testmonitors"), func(m *tb.Message) {
-			telegramNotify("This is monitor test. If you see it its all good")
+			telegramNotifyf("This is monitor test. If you see it its all good")
 			b.Send(m.Sender, "test sent!")
 		})
 
 		b.Handle(c("/start"), func(m *tb.Message) {
 			b.Send(m.Sender, fmt.Sprintf(
-				"VigilantPI - %s\nstarted: %s - now: %s\n\nYour number: %s",
+				"VigilantPI - %s\nstarted: %s\n- now: %s\nIP: %s\n\nYour username: %s\n\nCommands:\n\n",
 				version,
-				started.Format(time.RubyDate),
+				started.Format("15:04:05 - 02/01/2006"),
 				serverDate(),
+				localIP(),
 				m.Sender.Username,
+				strings.Join(cmds, "\n\n"),
 			))
 		})
 
-		b.Handle(c("/admins"), func(m *tb.Message) {
+		b.Handle(c("/monitors"), func(m *tb.Message) {
 			b.Send(m.Sender, fmt.Sprintf(
-				"**Admin:**\n\n%s\n\n**Group Monitors:**\n\n%s\n\n**User Monitors:**\n\n%s",
+				"*Admin:*\n\n%s\n\n*Group Monitors:*\n\n%s\n\n*User Monitors:*\n\n%s",
 				strings.Join(config.TelegramBot.Users, ", "),
 				strings.Join(db.GetArray("monitors"), ", "),
 				strings.Join(db.GetArray("user-monitors"), ", "),
@@ -217,6 +263,11 @@ func telegramBot() {
 
 		b.Handle(c("/config"), func(m *tb.Message) {
 			b.Send(m.Sender, serverConfig())
+		})
+
+		b.Handle(c("/storage"), func(m *tb.Message) {
+			b.Send(m.Sender, "Wait...", tb.Silent)
+			b.Send(m.Sender, serverDF())
 		})
 
 		b.Handle(c("/date"), func(m *tb.Message) {
@@ -258,43 +309,46 @@ func telegramBot() {
 			}
 			var msg []string
 			for _, cam := range config.Cameras {
-				msg = append(msg, "📷 /snapshot "+cam.Name)
+				msg = append(msg, click("📷 /snapshot", cam.Name))
 			}
 			b.Send(m.Sender, fmt.Sprintf("Your cameras, sr:\n\n%s", strings.Join(msg, "\n\n")))
 		})
 
-		b.Handle(c("/snapshot"), func(m *tb.Message) {
+		custom("/snapshot", func(m *tb.Message) {
 			cam, ok := cameraByName[m.Payload]
 			if !ok {
 				b.Send(m.Sender, fmt.Sprintf("You have no camera with name '%s'!", m.Payload))
 				var msg []string
 				for _, cam := range config.Cameras {
-					msg = append(msg, "📷 /snapshot "+cam.Name)
+					msg = append(msg, click("📷 /snapshot", cam.Name))
 				}
 				b.Send(m.Sender, fmt.Sprintf("Your cameras, sr:\n\n%s", strings.Join(msg, "\n\n")))
 				return
 			}
 
-			b.Send(m.Sender, "Taking snapshot...")
-			file, err := cam.Snapshot()
+			b.Send(m.Sender, "Taking snapshot...", tb.Silent)
+			file, _, err := cam.Snapshot()
 			if err != nil {
 				b.Send(m.Sender, fmt.Sprintf("Error taking snapshot: %s", err))
 				return
 			}
 
-			b.Send(m.Sender, "Uploading snapshot...")
+			b.Send(m.Sender, "Uploading snapshot...", tb.Silent)
 			photo := &tb.Photo{File: tb.FromDisk(file)}
 			b.Send(m.Sender, photo)
 		})
 
 		b.Handle(tb.OnText, func(m *tb.Message) {
+			if handleCustomCMD(m) {
+				return
+			}
 			b.Send(m.Sender, fmt.Sprintf(
 				"What do you mean by '"+m.Text+"'? 🤔\n\nAvailable commands:\n\n%s",
 				strings.Join(cmds, "\n\n"),
 			))
 		})
 
-		b.Handle(c("/files"), func(m *tb.Message) {
+		custom("/files", func(m *tb.Message) {
 			dir := strings.TrimSpace(strings.ReplaceAll(m.Payload, "../", ""))
 			if dir == "" {
 				dir = "."
@@ -309,18 +363,39 @@ func telegramBot() {
 
 			var list []string
 			var prefix string
-			for _, f := range files {
-				prefix = "💾 /upload "
-				if f.IsDir() {
-					prefix = "📂 /files "
-				}
-				list = append(list, prefix+path.Join(dir, f.Name()))
+			var fName string
+			var txt string
+			var ln int
+
+			b.Send(m.Sender, fmt.Sprintf("📂 %s:", dir))
+
+			send := func() {
+				b.Send(m.Sender, strings.Join(list, "\n\n"))
 			}
 
-			b.Send(m.Sender, fmt.Sprintf("📂 %s:\n\n%s", dir, strings.Join(list, "\n\n")))
+			for _, f := range files {
+				prefix = "📂 /files"
+				fName = f.Name()
+				if !f.IsDir() {
+					prefix = "💾 /upload"
+					strings.LastIndex(fName, ".")
+				}
+				txt = click(prefix, path.Join(dir, fName))
+				list = append(list, txt)
+				ln = ln + len(txt)
+				if ln >= 3500 {
+					send()
+					list = []string{}
+					ln = 0
+				}
+			}
+
+			if ln != 0 {
+				send()
+			}
 		})
 
-		b.Handle(c("/upload"), func(m *tb.Message) {
+		custom("/upload", func(m *tb.Message) {
 			file := path.Join(videosDir, strings.TrimSpace(strings.ReplaceAll(m.Payload, "../", "")))
 			info, err := os.Stat(file)
 			if os.IsNotExist(err) {
@@ -344,8 +419,54 @@ func telegramBot() {
 		b.Start()
 	}
 
+	go sendNotifications()
+
 	for {
 		connect()
 		time.Sleep(time.Second * 10)
 	}
+}
+
+func cSep(str string, chr rune, add int) string {
+	und := 0
+	max := 1
+	for _, c := range str {
+		if c == chr {
+			und++
+			if und > max {
+				max = und
+			}
+		} else {
+			und = 0
+		}
+	}
+	sl := max + add
+	s := make([]rune, sl)
+	for i := 0; i < sl; i++ {
+		s[i] = chr
+	}
+	return string(s)
+}
+
+func click(cmd, item string) string {
+	slashSep := cSep(item, '_', 1)
+	dotSep := cSep(item, '0', 1)
+	return strings.TrimSpace(cmd) + "_" + strings.ReplaceAll(strings.ReplaceAll(item, "/", slashSep), ".", dotSep)
+}
+
+func handleCustomCMD(m *tb.Message) bool {
+	i := strings.Index(m.Text, "_")
+	if i == -1 {
+		return false
+	}
+	cmd := m.Text[0:i]
+	if h, ok := customCMD[cmd]; ok {
+		text := m.Text[i+1:]
+		slashSep := cSep(text, '_', 0)
+		dotSep := cSep(text, '0', 0)
+		m.Payload = strings.ReplaceAll(strings.ReplaceAll(text, slashSep, "/"), dotSep, ".")
+		h(m)
+		return true
+	}
+	return false
 }

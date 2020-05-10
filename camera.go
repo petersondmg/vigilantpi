@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"net/url"
 	"os"
 	"os/exec"
@@ -12,13 +14,22 @@ import (
 	"time"
 
 	ping "github.com/sparrc/go-ping"
+
+	"github.com/corona10/goimagehash"
 )
 
 const (
 	minVideoDuration = time.Second * 50
 )
 
-var cameraByName map[string]*Camera
+var (
+	cameraByName map[string]*Camera
+	hashFnByName = map[string]func(image.Image) (*goimagehash.ImageHash, error){
+		"perception": goimagehash.PerceptionHash,
+		"average":    goimagehash.AverageHash,
+		"difference": goimagehash.DifferenceHash,
+	}
+)
 
 func init() {
 	cameraByName = make(map[string]*Camera)
@@ -26,27 +37,152 @@ func init() {
 
 // Camera ...
 type Camera struct {
-	Name     string   `yaml:"name"`
-	URL      string   `yaml:"url"`
-	Audio    bool     `yaml:"audio"`
-	PreRec   []string `yaml:"pre_rec"`
-	AfterRec []string `yaml:"after_rec"`
-	healthy  bool
+	Name            string   `yaml:"name"`
+	URL             string   `yaml:"url"`
+	Audio           bool     `yaml:"audio"`
+	PreRec          []string `yaml:"pre_rec"`
+	AfterRec        []string `yaml:"after_rec"`
+	MotionDetection *struct {
+		SnapshotInterval time.Duration `yaml:"snapshot_interval"`
+		MinDistance      int           `yaml:"min_distance"`
+		MaxDistance      int           `yaml:"max_distance"`
+		Alg              string        `yaml:"alg"`
+		TimeRange        struct {
+			Start time.Duration `yaml:"start"`
+			End   time.Duration `yaml:"end"`
+		} `yaml:"time_range"`
+	} `yaml:"motion_detection"`
+	healthy bool
 }
 
-func (c *Camera) Snapshot() (string, error) {
-	dir := path.Join(videosDir, "snapshots")
-	if err := os.MkdirAll(dir, 0774); err != nil {
-		return "", err
+func (c *Camera) SetupMotionDetection() {
+	if c.MotionDetection == nil {
+		return
+	}
+	md := c.MotionDetection
+	if md.SnapshotInterval < time.Minute {
+		md.SnapshotInterval = time.Minute
 	}
 
-	file := fmt.Sprintf("%s/%s_%s.jpg", dir, c.Name, time.Now().Format("2006_01_02_15_04_05"))
-	const cmd = `ffmpeg -y -i '%s' -ss 00:00:01.500 -f image2 -vframes 1 '%s' 2>/dev/null`
-	out, err := exec.Command("bash", "-c", fmt.Sprintf(cmd, c.URL, file)).Output()
-	if err != nil {
-		return "", fmt.Errorf("err: %s - out: %s", err, out)
+	hasher, ok := hashFnByName[md.Alg]
+	if !ok {
+		hasher = goimagehash.DifferenceHash
+		md.Alg = "difference"
 	}
-	return file, nil
+
+	logger.Printf("md: set for %s - %v", c.Name, md)
+
+	go func() {
+		emptyFn := func() error { return nil }
+		var (
+			path, lastPath string
+			err            error
+
+			rm     = emptyFn
+			lastRm = emptyFn
+		)
+		fire := func(t time.Time) {
+			// only run in time window if set to
+			if md.TimeRange.Start != 0 && md.TimeRange.End != 0 {
+				midnight := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+				if t.Before(midnight.Add(md.TimeRange.Start)) ||
+					t.After(midnight.Add(md.TimeRange.End)) {
+					return
+				}
+			}
+			path, rm, err = c.Snapshot()
+			if err != nil {
+				logger.Printf("md: error taking snapshot on %s: %s", c.Name, err)
+				return
+			}
+			if lastPath != "" {
+				func() {
+					lastFile, err := os.Open(lastPath)
+					if err != nil {
+						logger.Printf("md: error opening last file of %s: %s", c.Name, err)
+						return
+					}
+					defer lastFile.Close()
+					lastImg, err := jpeg.Decode(lastFile)
+					if err != nil {
+						logger.Printf("md: error decoding last image of %s: %s", c.Name, err)
+						return
+					}
+
+					currFile, err := os.Open(path)
+					if err != nil {
+						logger.Printf("md: error opening current file of %s: %s", c.Name, err)
+						return
+					}
+					defer currFile.Close()
+					currImg, err := jpeg.Decode(currFile)
+					if err != nil {
+						logger.Printf("md: error decoding current image of %s: %s", c.Name, err)
+						return
+					}
+
+					hash1, _ := hasher(lastImg)
+					hash2, _ := hasher(currImg)
+
+					distance, err := hash1.Distance(hash2)
+					if err != nil {
+						logger.Printf("md: error checking distance of %s: %s", c.Name, err)
+						return
+					}
+
+					if distance < md.MinDistance || distance > md.MaxDistance {
+						if distance > md.MaxDistance {
+							logger.Printf("md: ignored! distance: %d on camera %s", distance, c.Name)
+						}
+						return
+					}
+
+					logger.Printf(
+						"md: difference detected!! v: %d - last: %s, current: %s",
+						distance,
+						lastPath,
+						path,
+					)
+
+					// wont delete
+					lastRm = emptyFn
+					rm = emptyFn
+
+					telegramNotify(TelegramNotification{
+						Text:   fmt.Sprintf("Motion detection on camera %s. (distance: %d)", c.Name, distance),
+						Images: []string{lastPath, path},
+					})
+				}()
+			}
+
+			if err := lastRm(); err != nil {
+				logger.Printf("md: error removing last snapshot on %s: %s", c.Name, err)
+			}
+			lastPath = path
+			lastRm = rm
+		}
+		for now := range time.Tick(md.SnapshotInterval) {
+			fire(now)
+		}
+	}()
+}
+
+func (c *Camera) Snapshot() (fpath string, rm func() error, err error) {
+	dir := path.Join(videosDir, "snapshots")
+	if err := os.MkdirAll(dir, 0774); err != nil {
+		return "", nil, err
+	}
+
+	fpath = fmt.Sprintf("%s/%s_%s.jpg", dir, c.Name, time.Now().Format("2006_01_02_15_04_05"))
+	const cmd = `ffmpeg -y -i '%s' -ss 00:00:01.500 -f image2 -vframes 1 '%s'`
+	out, err := exec.Command("bash", "-c", fmt.Sprintf(cmd, c.URL, fpath)).Output()
+	if err != nil {
+		return "", nil, fmt.Errorf("err: %s - out: %s", err, out)
+	}
+	rm = func() error {
+		return os.Remove(fpath)
+	}
+	return
 }
 
 func (c *Camera) Unhealthy() {
@@ -146,7 +282,7 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 
 	if !hddIsMounted() {
 		logger.Println("can't record: hdd is not mounted")
-		telegramNotify("error: HD is not working")
+		telegramNotifyf("error: HD is not working")
 		led.BadHD()
 		tryMount()
 		return

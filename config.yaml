@@ -28,6 +28,14 @@ delete_after_days: 20
 cameras:
 - name: fundo_hall
   url: rtsp://192.168.10.104:10554/udp/av0_1
+  motion_detection:
+    alg: difference 
+    min_distance: 2
+    max_distance: 20
+    snapshot_interval: 1m
+    time_range:
+        start: 0h0m1s
+        end: 23h59m59s
 
 - name: palco
   url: rtsp://192.168.10.109:10554/udp/av0_1
