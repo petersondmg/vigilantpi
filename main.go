@@ -121,6 +121,18 @@ func main() {
 
 	finished := make(chan struct{})
 	go func() {
+		if p := db.Get("pause"); p != "" {
+			db.Del("pause")
+			pause, err := time.ParseDuration(p)
+			if err == nil && pause > 0 {
+				msg := fmt.Sprintf("System paused %s! Restart to resume.", pause)
+				logger.Printf(msg)
+				telegramNotifyf(msg)
+				time.Sleep(pause)
+				logger.Print("System resumed!")
+				telegramNotifyf("System resumed!")
+			}
+		}
 		run(ctx, config.Cameras)
 		finished <- struct{}{}
 	}()

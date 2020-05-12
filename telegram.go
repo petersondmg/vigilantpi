@@ -238,7 +238,7 @@ func telegramBot() {
 
 		b.Handle(c("/start"), func(m *tb.Message) {
 			b.Send(m.Sender, fmt.Sprintf(
-				"VigilantPI - %s\nstarted: %s\n- now: %s\nIP: %s\n\nYour username: %s\n\nCommands:\n\n",
+				"VigilantPI - %s\nstarted: %s\nnow: %s\nIP: %s\n\nYour username: %s\n\nCommands:\n\n%s",
 				version,
 				started.Format("15:04:05 - 02/01/2006"),
 				serverDate(),
@@ -284,6 +284,29 @@ func telegramBot() {
 
 		b.Handle(c("/restart"), func(m *tb.Message) {
 			b.Send(m.Sender, "Let's start again... You're welcome!")
+			db.Del("pause")
+			go func() {
+				time.Sleep(time.Second)
+				restart()
+			}()
+		})
+
+		b.Handle(c("/pause"), func(m *tb.Message) {
+			d, err := time.ParseDuration(m.Payload)
+			if err != nil {
+				b.Send(m.Sender, fmt.Sprintf("invalid duration '%s'. Ex.: /pause 10m", m.Payload))
+				return
+			}
+			db.Set("pause", d.String())
+			b.Send(m.Sender, fmt.Sprintf("pausing %s. restarting...", d))
+			go func() {
+				time.Sleep(time.Second)
+				restart()
+			}()
+		})
+
+		b.Handle(c("/resume"), func(m *tb.Message) {
+			b.Send(m.Sender, serverLog())
 			go func() {
 				time.Sleep(time.Second)
 				restart()
@@ -397,7 +420,7 @@ func telegramBot() {
 
 		custom("/remove", func(m *tb.Message) {
 			file := path.Join(videosDir, strings.TrimSpace(strings.ReplaceAll(m.Payload, "../", "")))
-			err := os.Remove(file)
+			err := os.RemoveAll(file)
 			if err != nil {
 				b.Send(m.Sender, fmt.Sprintf("error removing '%s'", file))
 				return
