@@ -395,6 +395,16 @@ func telegramBot() {
 			}
 		})
 
+		custom("/remove", func(m *tb.Message) {
+			file := path.Join(videosDir, strings.TrimSpace(strings.ReplaceAll(m.Payload, "../", "")))
+			err := os.Remove(file)
+			if err != nil {
+				b.Send(m.Sender, fmt.Sprintf("error removing '%s'", file))
+				return
+			}
+			b.Send(m.Sender, fmt.Sprintf("'%s' removed", file))
+		})
+
 		custom("/upload", func(m *tb.Message) {
 			file := path.Join(videosDir, strings.TrimSpace(strings.ReplaceAll(m.Payload, "../", "")))
 			info, err := os.Stat(file)
