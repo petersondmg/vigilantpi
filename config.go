@@ -47,8 +47,10 @@ type Config struct {
 	Tasks Tasks `yaml:"tasks"`
 
 	TelegramBot struct {
-		Token string   `yaml:"token"`
-		Users []string `yaml:"users"`
+		Token          string   `yaml:"token"`
+		Users          []string `yaml:"users"`
+		AllowSnapshots bool     `yaml:"allow_snapshots"`
+		AllowUpload    bool     `yaml:"allow_upload"`
 	} `yaml:"telegram_bot"`
 }
 

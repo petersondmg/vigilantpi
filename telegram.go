@@ -338,6 +338,10 @@ func telegramBot() {
 		})
 
 		custom("/snapshot", func(m *tb.Message) {
+			if !config.TelegramBot.AllowSnapshots {
+				b.Send(m.Sender, "Snapshots are not allowed!")
+				return
+			}
 			cam, ok := cameraByName[m.Payload]
 			if !ok {
 				b.Send(m.Sender, fmt.Sprintf("You have no camera with name '%s'!", m.Payload))
@@ -429,6 +433,11 @@ func telegramBot() {
 		})
 
 		custom("/upload", func(m *tb.Message) {
+			if !config.TelegramBot.AllowUpload {
+				b.Send(m.Sender, "Upload is not allowed!")
+				return
+			}
+
 			file := path.Join(videosDir, strings.TrimSpace(strings.ReplaceAll(m.Payload, "../", "")))
 			info, err := os.Stat(file)
 			if os.IsNotExist(err) {
