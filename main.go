@@ -49,9 +49,18 @@ var (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Println(version)
-		return
+	if len(os.Args) > 1 {
+        switch os.Args[1] {
+        
+        case "version":
+            fmt.Println(version)
+            return
+
+        case "mount-dir":
+            loadConfig()
+            fmt.Println(config.MountDir)
+            return
+        }
 	}
 
 	kill := make(chan os.Signal, 1)
