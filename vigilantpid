@@ -31,7 +31,25 @@ checkupdate() {
         && mv $BIN_DIR/_update/vigilantpi $BIN_DIR/vigilantpi_latest
 }
 
+move_logs() {
+    local mountdir=$(vigilantpi mount-dir)
+    if mountpoint -q "$mountdir"; then
+	if [ -L "$LOG" ]; then
+		echo eh link
+	else	
+		touch "$mountdir/vigilantpi.log" && \
+		mv "$LOG" "$LOG-tmp" && \
+		ln -sf "$mountdir/vigilantpi.log" "$LOG" && \
+		cat "$LOG-tmp" >> "$LOG" && \
+		rm -f "$LOG-tmp" && \
+		echo "log moved to $mountdir"
+	fi	
+    fi
+}
+
 (while true; do
+    move_logs
+
     checkupdate
 	
     if [ -e $BIN_DIR/vigilantpi_latest ]; then
