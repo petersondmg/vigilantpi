@@ -7,7 +7,19 @@ export PATH="$PATH:$BIN_DIR"
 
 
 checkupdate() {
+    cd $BIN_DIR
     echo checking for update
+
+    if [ -e "vigilantpi" ]; then
+       	version=$(vigilantpi version)
+        if [ "$version" == development ]; then
+            echo development version - wont update
+            return
+        fi
+    else
+        touch vigilantpi
+    fi
+
     version=$(vigilantpi version)
     res=$(curl -s https://api.github.com/repos/petersondmg/vigilantpi/releases/latest)
 
