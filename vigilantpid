@@ -1,7 +1,7 @@
 #!/bin/sh
 
 export CONFIG=/home/alarm/config.yaml
-LOG=/home/alarm/vigilantpi.log
+export LOG=/home/alarm/vigilantpi.log
 BIN_DIR=/home/alarm
 export PATH="$PATH:$BIN_DIR"
 

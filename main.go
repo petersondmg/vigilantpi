@@ -14,12 +14,11 @@ import (
 	"vigilantpi/db"
 )
 
-const (
-	logPath = "/home/alarm/vigilantpi.log"
-)
 
 var (
 	version = "development"
+
+    logPath = os.Getenv("LOG")
 
 	logger     *log.Logger
 	videosDir  string
