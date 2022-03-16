@@ -40,6 +40,7 @@ type Camera struct {
 	Name            string   `yaml:"name"`
 	URL             string   `yaml:"url"`
 	Audio           bool     `yaml:"audio"`
+	VideoCodec      string   `yaml:"video_codec"`
 	PreRec          []string `yaml:"pre_rec"`
 	AfterRec        []string `yaml:"after_rec"`
 	MotionDetection *struct {
@@ -306,6 +307,11 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 		logger.Printf("recording %s...\n", c.Name)
 	}
 
+	codec := c.VideoCodec
+	if codec == "" {
+		codec = "copy"
+	}
+
 	args := []string{
 		ffmpeg,
 		"-nostdin",
@@ -316,7 +322,7 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 		"-i",
 		c.URL,
 		"-c:v",
-		"copy",
+		codec,
 		"-r",
 		"10",
 	}
@@ -382,7 +388,7 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 	go func() {
 		select {
 		case <-ctx.Done():
-			logger.Println("sending SIGTERM to ffmpeg process of ", c.Name, "-", p.Signal(syscall.SIGTERM))
+			logger.Println("sending SIGTERM to ffmpeg process of", c.Name, " - error return: ", p.Signal(syscall.SIGTERM))
 			sigterm = true
 		case <-exited:
 		}

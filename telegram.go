@@ -238,7 +238,7 @@ func telegramBot() {
 
 		b.Handle(c("/start"), func(m *tb.Message) {
 			b.Send(m.Sender, fmt.Sprintf(
-				"VigilantPI - %s\nstarted: %s\nnow: %s\nIP: %s\n\nYour username: %s\n\nCommands:\n\n%s",
+				"VigilantPI - %s\nstarted: %s\nnow: %s\nAdmin: http://%s\n\nYour username: %s\n\nCommands:\n\n%s",
 				version,
 				started.Format("15:04:05 - 02/01/2006"),
 				serverDate(),

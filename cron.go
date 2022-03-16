@@ -43,7 +43,7 @@ func oldFilesWatcher(days int) {
 
 	ticker := time.NewTicker(6 * time.Hour)
 	deleteOldStuff := func() {
-		logger.Println("veryfing old content")
+		logger.Println("checking old content")
 		files, err := ioutil.ReadDir(videosDir)
 		if err != nil {
 			logger.Printf("error getting files on %s when deleting old content: %s", videosDir, err)
@@ -72,11 +72,10 @@ func oldFilesWatcher(days int) {
 			}(path.Join(videosDir, f.Name()))
 		}
 	}
+
 	go deleteOldStuff()
-	for {
-		select {
-		case <-ticker.C:
-			deleteOldStuff()
-		}
+
+	for range ticker.C {
+		deleteOldStuff()
 	}
 }

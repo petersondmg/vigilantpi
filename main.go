@@ -14,18 +14,28 @@ import (
 	"vigilantpi/db"
 )
 
-
 var (
 	version = "development"
 
-    logPath = os.Getenv("LOG")
+	logPath = os.Getenv("LOG")
 
-	logger     *log.Logger
-	videosDir  string
-	duration   time.Duration
+	logger *log.Logger
+
 	configPath string
-	ffmpeg     string
-	led        struct {
+	videosDir  string
+	mountedDir string
+	mountDev   string
+	duration   time.Duration
+
+	ffmpeg string
+
+	started = time.Now()
+
+	config *Config
+
+	emptyFn = func() {}
+
+	led = struct {
 		BadHD      func()
 		BadNetwork func()
 		BadCamera  func()
@@ -34,13 +44,14 @@ var (
 		Off func()
 
 		Confirm func()
+	}{
+		BadHD:      emptyFn,
+		BadNetwork: emptyFn,
+		BadCamera:  emptyFn,
+		On:         emptyFn,
+		Off:        emptyFn,
+		Confirm:    emptyFn,
 	}
-	mountedDir string
-	mountDev   string
-
-	started = time.Now()
-
-	config *Config
 
 	stop chan struct{}
 
@@ -49,17 +60,17 @@ var (
 
 func main() {
 	if len(os.Args) > 1 {
-        switch os.Args[1] {
-        
-        case "version":
-            fmt.Println(version)
-            return
+		switch os.Args[1] {
 
-        case "mount-dir":
-            loadConfig()
-            fmt.Println(config.MountDir)
-            return
-        }
+		case "version":
+			fmt.Println(version)
+			return
+
+		case "mount-dir":
+			loadConfig()
+			fmt.Println(config.MountDir)
+			return
+		}
 	}
 
 	kill := make(chan os.Signal, 1)
@@ -112,7 +123,8 @@ func main() {
 
 	vigilantDB := os.Getenv("DB")
 	if vigilantDB == "" {
-		vigilantDB = "/home/alarm/vigilantdb.json"
+		vigilantDB = "/home/pi/vigilantpi/db.json"
+		log.Printf("No DB env. Default DB to %s", vigilantDB)
 	}
 
 	if err := db.Init(vigilantDB); err != nil {
@@ -170,12 +182,6 @@ func main() {
 		if err != nil {
 			logger.Printf("error rebooting: %s", err)
 		}
-	}
-}
-
-func errIsNil(err error) {
-	if err != nil {
-		logger.Fatal(err)
 	}
 }
 
