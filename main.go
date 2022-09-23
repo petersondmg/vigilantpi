@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -25,7 +26,9 @@ var (
 	videosDir  string
 	mountedDir string
 	mountDev   string
-	duration   time.Duration
+	mountLabel string
+
+	duration time.Duration
 
 	ffmpeg string
 
@@ -120,6 +123,7 @@ func main() {
 
 	mountedDir = safeShell(config.MountDir)
 	mountDev = safeShell(config.MountDev)
+	mountLabel = safeShell(config.MountLabel)
 
 	vigilantDB := os.Getenv("DB")
 	if vigilantDB == "" {
@@ -159,6 +163,10 @@ func main() {
 
 	go crond(config.Cron)
 
+	if config.HealthCheckURL != "" {
+		go healthcheck()
+	}
+
 	<-stop
 	cancel()
 
@@ -185,11 +193,41 @@ func main() {
 	}
 }
 
+func healthcheck() {
+	log.Printf("health check enabled")
+	for range time.NewTicker(time.Minute * 5).C {
+		healthy := true
+		if !hddIsMounted() {
+			healthy = false
+		}
+
+		for _, c := range cameraByName {
+			if !c.healthy {
+				healthy = false
+			}
+		}
+
+		if healthy {
+			req, err := http.NewRequest(http.MethodGet, config.HealthCheckURL, nil)
+			if err != nil {
+				log.Printf("error on health check url: %s: %s", config.HealthCheckURL, err)
+				return
+			}
+			res, err := tasksClient.Do(req)
+			if err != nil {
+				log.Printf("error on health check request: %s", err)
+				return
+			}
+			defer res.Body.Close()
+		}
+	}
+}
+
 func run(ctx context.Context, cameras []Camera) {
 	if !hddIsMounted() {
 		led.BadHD()
-		tryMount()
 		for !hddIsMounted() {
+			tryMount()
 			logger.Println("hdd is not mounted. waiting..")
 			time.Sleep(time.Second * 10)
 		}

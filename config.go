@@ -13,10 +13,14 @@ import (
 
 // Config yaml ...
 type Config struct {
-	FFMPEG             string `yaml:"ffmpeg"`
-	MountDir           string `yaml:"mount_dir"`
-	MountDev           string `yaml:"mount_dev"`
-	PreventHDDSpindown bool   `yaml:"prevent_hdd_spindown"`
+	FFMPEG             string        `yaml:"ffmpeg"`
+	MountDir           string        `yaml:"mount_dir"`
+	MountDev           string        `yaml:"mount_dev"`
+	MountLabel         string        `yaml:"mount_label"`
+	PreventHDDSpindown bool          `yaml:"prevent_hdd_spindown"`
+	TerminationTimeout time.Duration `yaml:"termination_timeout"`
+
+	HealthCheckURL string `yaml:"health_check_url"`
 
 	Admin struct {
 		User string `yaml:"user"`
@@ -52,6 +56,8 @@ type Config struct {
 		AllowSnapshots bool     `yaml:"allow_snapshots"`
 		AllowUpload    bool     `yaml:"allow_upload"`
 	} `yaml:"telegram_bot"`
+
+	Debug bool `yaml:"debug"`
 }
 
 func updateConfig() {

@@ -43,7 +43,7 @@ func hddIsMounted() bool {
 }
 
 func tryMount() {
-	if mountDev == "" {
+	if mountDev == "" && mountLabel == "" {
 		return
 	}
 	if mountedDir == "" {
@@ -51,17 +51,27 @@ func tryMount() {
 		return
 	}
 	logger.Println("trying to mount...")
-	_, err := exec.Command(
-		"mount",
+	args := []string{
 		"-t",
 		"vfat",
 		"-o",
 		"umask=0022,gid=1000,uid=1000",
-		mountDev,
-		mountedDir,
+	}
+
+	if mountDev != "" {
+		args = append(args, mountDev)
+	} else {
+		args = append(args, "-L", mountLabel)
+	}
+
+	args = append(args, mountedDir)
+
+	res, err := exec.Command(
+		"mount",
+		args...,
 	).Output()
 	if err != nil {
-		logger.Println("error when trying to mount:", err)
+		logger.Printf("error when trying to mount: %s. result: %s", err, string(res))
 		return
 	}
 	if config.PreventHDDSpindown {

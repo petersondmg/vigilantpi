@@ -37,13 +37,19 @@ func init() {
 
 // Camera ...
 type Camera struct {
-	Name            string   `yaml:"name"`
-	URL             string   `yaml:"url"`
-	Audio           bool     `yaml:"audio"`
-	VideoCodec      string   `yaml:"video_codec"`
-	PreRec          []string `yaml:"pre_rec"`
-	AfterRec        []string `yaml:"after_rec"`
-	MotionDetection *struct {
+	Name                      string   `yaml:"name"`
+	URL                       string   `yaml:"url"`
+	Audio                     bool     `yaml:"audio"`
+	VideoCodec                string   `yaml:"video_codec"`
+	AudioCodec                string   `yaml:"audio_codec"`
+	Extension                 string   `yaml:"extension"`
+	RTSPTransport             string   `yaml:"rtsp_transport"`
+	InRate                    float64  `yaml:"in_rate"`
+	OutRate                   float64  `yaml:"out_rate"`
+	PreRec                    []string `yaml:"pre_rec"`
+	AfterRec                  []string `yaml:"after_rec"`
+	DisableParallelTransition bool     `yaml:"disable_parallel_transition"`
+	MotionDetection           *struct {
 		SnapshotInterval time.Duration `yaml:"snapshot_interval"`
 		MinDistance      int           `yaml:"min_distance"`
 		MaxDistance      int           `yaml:"max_distance"`
@@ -188,6 +194,7 @@ func (c *Camera) Snapshot() (fpath string, rm func() error, err error) {
 
 func (c *Camera) Unhealthy() {
 	c.healthy = false
+
 }
 
 func (c *Camera) Healthy() {
@@ -216,7 +223,7 @@ func (c *Camera) HealthCheck() func() {
 		pinger.Run()
 
 		stats := pinger.Statistics()
-		if stats.PacketsRecv < pinger.Count {
+		if stats.PacketsRecv == 0 {
 			logger.Printf(
 				"camera %s in not responding. ping stats - sent: %d, recv: %d,    loss: %v%%",
 				c.Name,
@@ -279,7 +286,11 @@ const (
 func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 	start := time.Now()
 	dayDir := start.Format(dayDirLayout)
-	fileName := start.Format("15_04_05_") + c.Name + ".mp4"
+
+	if c.Extension == "" {
+		c.Extension = "mp4"
+	}
+	fileName := start.Format("15_04_05_") + c.Name + "." + c.Extension
 
 	if !hddIsMounted() {
 		logger.Println("can't record: hdd is not mounted")
@@ -312,23 +323,46 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 		codec = "copy"
 	}
 
+	if c.InRate <= 0 {
+		c.InRate = 10
+	}
+
+	if c.OutRate <= 0 {
+		c.OutRate = 10
+	}
+
 	args := []string{
 		ffmpeg,
 		"-nostdin",
 		"-nostats",
 		"-y",
 		"-r",
-		"10",
+		fmt.Sprintf("%.1f", c.InRate),
+	}
+
+	if c.RTSPTransport != "" {
+		args = append(args, "-rtsp_transport", c.RTSPTransport)
+	}
+
+	args = append(
+		args,
 		"-i",
 		c.URL,
 		"-c:v",
 		codec,
 		"-r",
-		"10",
-	}
+		fmt.Sprintf("%.1f", c.OutRate),
+	)
 
 	if !c.Audio {
 		args = append(args, "-an")
+	} else {
+		audioCodec := c.AudioCodec
+		if audioCodec == "" {
+			audioCodec = "copy"
+		}
+
+		args = append(args, "-c:a", audioCodec)
 	}
 
 	args = append(
@@ -341,77 +375,53 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 		path.Join(videosDir, dayDir, fileName),
 	)
 
-	p, err := os.StartProcess(
-		ffmpeg,
-		args,
-		&os.ProcAttr{
-			Env: os.Environ(),
+	signals := make(chan syscall.Signal, 1)
+	defer func() {
+		close(signals)
+	}()
 
-			Files: []*os.File{
-				nil,
-				nil, // os.Stdout,
-				nil, // os.Stdout,
-			},
-		},
-	)
-
-	//logger.Println(strings.Join(args, " "))
-
-	if err != nil {
-		logger.Printf("error running ffmpeg for %s - %s", c.Name, err)
-		led.BadCamera()
-		return
-	}
-
-	timeout := time.NewTimer(duration + (time.Minute * 5))
-	defer timeout.Stop()
-
-	exited := make(chan struct{})
-
-	var sigterm bool
+	finished := make(chan struct{}, 1)
 
 	go func() {
-		state, err := p.Wait()
+		err := execProcess(ffmpeg, args, signals)
 		if err != nil {
-			logger.Printf("error getting proccess state %s - %s", c.Name, err)
+			logger.Printf("error running ffmpeg for %s - %s", c.Name, err)
+			led.BadCamera()
 			return
 		}
-		if !sigterm && !state.Exited() {
-			logger.Printf("p.Wait() returned but process hasn't exited for %s. killing process...", c.Name)
-			p.Signal(syscall.SIGKILL)
-			p.Kill()
-		}
-		exited <- struct{}{}
-		exited <- struct{}{}
+		finished <- struct{}{}
 	}()
 
-	go func() {
-		select {
-		case <-ctx.Done():
-			logger.Println("sending SIGTERM to ffmpeg process of", c.Name, " - error return: ", p.Signal(syscall.SIGTERM))
-			sigterm = true
-		case <-exited:
-		}
-	}()
-
-	select {
-	case <-time.After(duration + (time.Minute * 1)):
-		logger.Printf("still processing %s...", c.Name)
-		stillProcessing <- struct{}{}
-
-	case <-timeout.C:
-		logger.Printf("recording process of %s has timeout. killing process...", c.Name)
-		p.Signal(syscall.SIGTERM)
-		sigterm = true
-		time.Sleep(time.Second * 1)
-		p.Signal(syscall.SIGKILL)
-		p.Kill()
-		return
-
-	case <-exited:
+	shouldInterrupt := make(chan struct{}, 1)
+	if !c.DisableParallelTransition {
+		go func() {
+			<-time.After(config.Duration)
+			shouldInterrupt <- struct{}{}
+		}()
 	}
 
-	took := time.Now().Sub(start)
+	select {
+	case <-ctx.Done():
+		signals <- syscall.SIGTERM
+		logger.Printf("SIGTERM sent to %s", c.Name)
+
+		select {
+		case <-finished:
+		case <-time.After(config.TerminationTimeout):
+			signals <- syscall.SIGKILL
+			logger.Printf("SIGKILL sent to %s", c.Name)
+		}
+
+	// only executes if parallel transition is enabled
+	case <-shouldInterrupt:
+		signals <- syscall.SIGINT
+		logger.Printf("SIGINT sent to %s", c.Name)
+
+	case <-finished:
+		logger.Printf("recording %s finished", c.Name)
+	}
+
+	took := time.Since(start)
 
 	if took < minVideoDuration {
 		if c.healthy {
@@ -432,4 +442,53 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 	}
 
 	c.RunAfterRecTasks()
+}
+func execProcess(ffmpeg string, args []string, signal chan syscall.Signal) error {
+	logger.Println("running")
+
+	var stdOut, stdErr *os.File
+
+	if config.Debug {
+		stdOut = os.Stdout
+		stdErr = os.Stderr
+	} else {
+		devNull := os.NewFile(0, os.DevNull)
+		stdOut = devNull
+		stdErr = devNull
+	}
+
+	p, err := os.StartProcess(
+		ffmpeg,
+		args,
+		&os.ProcAttr{
+			Env: os.Environ(),
+			Files: []*os.File{
+				nil, /* stdin */
+				stdOut,
+				stdErr,
+			},
+		},
+	)
+	if err != nil {
+		logger.Print(err)
+		return err
+	}
+
+	go func() {
+		for s := range signal {
+			logger.Printf("received signal: %s", s)
+			if err := p.Signal(s); err != nil {
+				logger.Printf("error sending signal: %s", err)
+			}
+		}
+	}()
+
+	state, err := p.Wait()
+	if err != nil {
+		logger.Printf("wait err: %s", err)
+		return err
+	}
+	logger.Println("state:", state)
+	logger.Println("finished")
+	return err
 }
