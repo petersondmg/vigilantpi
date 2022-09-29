@@ -181,8 +181,14 @@ func (c *Camera) Snapshot() (fpath string, rm func() error, err error) {
 	}
 
 	fpath = fmt.Sprintf("%s/%s_%s.jpg", dir, c.Name, time.Now().Format("2006_01_02_15_04_05"))
-	const cmd = `ffmpeg -y -i '%s' -ss 00:00:01.500 -f image2 -vframes 1 '%s'`
-	out, err := exec.Command("bash", "-c", fmt.Sprintf(cmd, c.URL, fpath)).Output()
+    
+    var optTransport string
+    if c.RTSPTransport != "" {
+        optTransport = "-rtsp_transport " + c.RTSPTransport
+    }
+
+	const cmd = `ffmpeg -y -i '%s' %s -ss 00:00:01.500 -f image2 -vframes 1 '%s'`
+	out, err := exec.Command("bash", "-c", fmt.Sprintf(cmd, c.URL, optTransport, fpath)).Output()
 	if err != nil {
 		return "", nil, fmt.Errorf("err: %s - out: %s", err, out)
 	}
