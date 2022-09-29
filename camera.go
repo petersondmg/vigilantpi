@@ -402,8 +402,8 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 
 	select {
 	case <-ctx.Done():
-		signals <- syscall.SIGTERM
-		logger.Printf("SIGTERM sent to %s", c.Name)
+		signals <- syscall.SIGINT
+		logger.Printf("SIGINT sent to %s", c.Name)
 
 		select {
 		case <-finished:
