@@ -180,9 +180,7 @@ func telegramBot() {
 		custom := func(cmd string, h func(m *tb.Message)) {
 			c(cmd)
 			customCMD[cmd] = h
-			//b.Handle(cmd, h)
 		}
-		_ = custom
 
 		b.Handle(tb.OnAddedToGroup, func(c telebot.Context) error {
 			m := c.Message()
@@ -203,6 +201,7 @@ func telegramBot() {
 				b.Send(m.Sender, "Sorry, something went wrong")
 				return nil
 			}
+
 			b.Send(m.Sender, "You are now a monitor")
 			return nil
 		})
@@ -309,6 +308,16 @@ func telegramBot() {
 			return nil
 		})
 
+		b.Handle(c("/force_reboot"), func(c telebot.Context) error {
+			m := c.Message()
+			b.Send(m.Sender, "Good bye...")
+			go func() {
+				time.Sleep(time.Second)
+				forceReboot()
+			}()
+			return nil
+		})
+
 		b.Handle(c("/restart"), func(c telebot.Context) error {
 			m := c.Message()
 			b.Send(m.Sender, "Let's start again... You're welcome!")
@@ -356,7 +365,7 @@ func telegramBot() {
 			}
 			var msg []string
 			for _, t := range config.Tasks {
-				msg = append(msg, "👉 "+t.Name)
+				msg = append(msg, click("⚙️ /run", t.Name))
 			}
 			b.Send(m.Sender, fmt.Sprintf("Your tasks, sr:\n\n%s", strings.Join(msg, "\n")))
 			return nil
@@ -402,6 +411,24 @@ func telegramBot() {
 			b.Send(m.Sender, "Uploading snapshot...", tb.Silent)
 			photo := &tb.Photo{File: tb.FromDisk(file)}
 			b.Send(m.Sender, photo)
+		})
+
+		custom("/run", func(m *telebot.Message) {
+			task, ok := taskByName[m.Payload]
+			if !ok {
+				b.Send(m.Sender, fmt.Sprintf("You have no task with name '%s'!", m.Payload))
+				return
+			}
+
+			b.Send(m.Sender, "Running...", tb.Silent)
+
+			output, err := task.run()
+			if err != nil {
+				b.Send(m.Sender, fmt.Sprintf("Error running task: %s. Output: %s", err, output))
+				return
+			}
+
+			b.Send(m.Sender, fmt.Sprintf("Task executed. Output: %s", output))
 		})
 
 		b.Handle(tb.OnText, func(c telebot.Context) error {

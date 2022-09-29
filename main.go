@@ -179,8 +179,7 @@ func main() {
 
 	go func() {
 		time.Sleep(time.Second * 1)
-		// force reboot on vigilantpid
-		os.Exit(2)
+		forceReboot()
 	}()
 
 	if shouldReboot {
@@ -337,4 +336,9 @@ func reboot() {
 	logger.Println("rebooting...")
 	shouldReboot = true
 	stop <- struct{}{}
+}
+
+func forceReboot() {
+	// force reboot on vigilantpid
+	os.Exit(2)
 }

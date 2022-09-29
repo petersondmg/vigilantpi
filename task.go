@@ -80,21 +80,26 @@ func (t *RequestTask) do() error {
 	return nil
 }
 
-func (t *Task) run() {
+func (t *Task) run() (string, error) {
 	if t.Command != nil {
 		out, err := exec.Command("bash", "-c", replaceWithConf(*t.Command)).Output()
 		if err != nil {
 			logger.Printf("error executing command task %s: %s", t.Name, err)
 		}
-		if s := string(out); s != "" {
+		s := string(out)
+		if s != "" {
 			logger.Print(s)
 		}
+		return s, err
 	}
+
 	if t.Request != nil {
 		if err := t.Request.do(); err != nil {
 			logger.Printf("error executing request task %s: %s", t.Name, err)
+			return "[error]", err
 		}
 	}
+	return "[done]", nil
 }
 
 func (t *Task) Run() {
