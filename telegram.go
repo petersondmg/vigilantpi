@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"path"
 	"strconv"
@@ -18,6 +19,10 @@ var (
 	b         *tb.Bot
 	notifyCh  chan TelegramNotification
 	customCMD map[string]func(m *tb.Message)
+
+	botClient = &http.Client{
+		Timeout: 10 * time.Second,
+	}
 )
 
 func init() {
@@ -149,7 +154,8 @@ func telegramBot() {
 	connect := func() {
 		var err error
 		b, err = tb.NewBot(tb.Settings{
-			Token: config.TelegramBot.Token,
+			Client: botClient,
+			Token:  config.TelegramBot.Token,
 			Poller: &tb.MiddlewarePoller{
 				Poller: &tb.LongPoller{
 					Timeout: 5 * time.Second,
@@ -158,6 +164,7 @@ func telegramBot() {
 					return filter(u, b)
 				},
 			},
+			Verbose: config.Debug,
 		})
 
 		if err != nil {
@@ -428,7 +435,8 @@ func telegramBot() {
 				return
 			}
 
-			b.Send(m.Sender, fmt.Sprintf("Task executed. Output: %s", output))
+			b.Send(m.Sender, "Task executed. Output:")
+			b.Send(m.Sender, output)
 		})
 
 		b.Handle(tb.OnText, func(c telebot.Context) error {
