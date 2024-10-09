@@ -230,10 +230,14 @@ var (
 	confReplaceRE = regexp.MustCompile(`\$\{\{ *([^}])+ *\}\}`)
 )
 
-func replaceWithConf(str string) string {
+func replaceWithConf(str string, data map[string]string) string {
 	now := time.Now()
 	confReplacer["_now"] = now.Format("2006_01_02_15_04_05")
 	confReplacer["now"] = now.Format("2006-01-02 15:04:05")
+
+    for k, v := range data {
+        confReplacer[k] = v
+    }
 
 	return confReplaceRE.ReplaceAllStringFunc(str, func(token string) string {
 		key := strings.Trim(token, "${{}} ")

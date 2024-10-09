@@ -429,7 +429,7 @@ func telegramBot() {
 
 			b.Send(m.Sender, "Running...", tb.Silent)
 
-			output, err := task.run()
+			output, err := task.run(nil)
 			if err != nil {
 				b.Send(m.Sender, fmt.Sprintf("Error running task: %s. Output: %s", err, output))
 				return

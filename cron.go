@@ -25,7 +25,7 @@ func crond(entries []Cron) {
 			for range time.Tick(cron.Every) {
 				for _, taskName := range cron.Tasks {
 					if task, ok := taskByName[taskName]; ok {
-						task.Run()
+						task.Run(nil)
 						continue
 					}
 					logger.Printf("invalid cron task. task %s was not declared", taskName)

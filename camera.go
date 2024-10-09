@@ -270,18 +270,18 @@ func (c *Camera) RunPreRecTasks() {
 			logger.Printf("invalid pre_rec task %s", taskName)
 			continue
 		}
-		task.Run()
+		task.Run(nil)
 	}
 }
 
-func (c *Camera) RunAfterRecTasks() {
-	for _, taskName := range c.PreRec {
+func (c *Camera) RunAfterRecTasks(data map[string]string) {
+	for _, taskName := range c.AfterRec {
 		task, ok := taskByName[taskName]
 		if !ok {
 			logger.Printf("invalid pre_rec task %s", taskName)
 			continue
 		}
-		task.Run()
+		task.Run(data)
 	}
 }
 
@@ -371,6 +371,8 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 		args = append(args, "-c:a", audioCodec)
 	}
 
+    filePath := path.Join(videosDir, dayDir, fileName)
+
 	args = append(
 		args,
 		//sets duration
@@ -378,7 +380,7 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 		strconv.Itoa(int(duration.Seconds())),
 		"-movflags",
 		"+faststart",
-		path.Join(videosDir, dayDir, fileName),
+		filePath,
 	)
 
 	signals := make(chan syscall.Signal, 1)
@@ -447,7 +449,7 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 		logger.Printf("recording %s took %s\n", c.Name, took)
 	}
 
-	c.RunAfterRecTasks()
+    c.RunAfterRecTasks(map[string]string{"file_path": filePath, "file_name": fileName})
 }
 func execProcess(ffmpeg string, args []string, signal chan syscall.Signal) error {
 	logger.Println("running")
