@@ -278,7 +278,7 @@ func (c *Camera) RunAfterRecTasks(data map[string]string) {
 	for _, taskName := range c.AfterRec {
 		task, ok := taskByName[taskName]
 		if !ok {
-			logger.Printf("invalid pre_rec task %s", taskName)
+			logger.Printf("invalid after_rec task %s", taskName)
 			continue
 		}
 		task.Run(data)
@@ -449,7 +449,14 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 		logger.Printf("recording %s took %s\n", c.Name, took)
 	}
 
-    c.RunAfterRecTasks(map[string]string{"file_path": filePath, "file_name": fileName})
+    c.RunAfterRecTasks(map[string]string{
+		"file_path": filePath,
+		"file_name": fileName,
+		"camera_name": c.Name,
+		"start_time": start.Format("15:04:05"),
+		"start_date": start.Format("2006-01-02"),
+		"start_datetime": start.Format("2006-01-02 15:04:05"),
+	})
 }
 func execProcess(ffmpeg string, args []string, signal chan syscall.Signal) error {
 	logger.Println("running")
