@@ -49,10 +49,12 @@ const tpl = `
 `
 
 func httpServer(addr, user, pass string) {
-	fs := http.FileServer(http.Dir(config.VideosDir))
-	http.Handle("/videos/", http.StripPrefix("/videos/", fs))
+	mux := http.NewServeMux()
 
-	http.HandleFunc("/force-reboot", func(w http.ResponseWriter, r *http.Request) {
+	fs := http.FileServer(http.Dir(config.VideosDir))
+	mux.Handle("/videos/", http.StripPrefix("/videos/", fs))
+
+	mux.HandleFunc("/force-reboot", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-type", "text/html")
 		w.Write([]byte(`<!DOCTYPE html>
 		<html>
@@ -72,7 +74,7 @@ func httpServer(addr, user, pass string) {
 		}()
 	})
 
-	http.HandleFunc("/reboot", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/reboot", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-type", "text/html")
 		w.Write([]byte(`<!DOCTYPE html>
 		<html>
@@ -92,7 +94,7 @@ func httpServer(addr, user, pass string) {
 		}()
 	})
 
-	http.HandleFunc("/restart", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/restart", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-type", "text/html")
 		w.Write([]byte(`<!DOCTYPE html>
 		<html>
@@ -112,13 +114,13 @@ func httpServer(addr, user, pass string) {
 		}()
 	})
 
-	http.HandleFunc("/clearlog", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/clearlog", func(w http.ResponseWriter, r *http.Request) {
 		go clearLogs()
 		time.Sleep(time.Second)
 		http.Redirect(w, r, "/", 302)
 	})
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 
 		var dfOption = `<a href="/?withdf=1">Update</a>`
 		if r.URL.Query().Get("withdf") != "" {
@@ -145,21 +147,22 @@ func httpServer(addr, user, pass string) {
 		addr = ":80"
 	}
 	logger.Printf("starting admin server on %s", addr)
-	err := http.ListenAndServe(addr, nil)
+	err := http.ListenAndServe(addr, auth(user, pass, mux))
 	if err != nil {
-		logger.Print("error on http server: %s", err)
+		logger.Printf("error on http server: %s", err)
 	}
 }
 
-func auth(fn http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if config.Admin.User != "" || config.Admin.Pass != "" {
-			user, pass, _ := r.BasicAuth()
-			if user != config.Admin.User || pass != config.Admin.Pass {
+func auth(user, pass string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user != "" || pass != "" {
+			u, p, ok := r.BasicAuth()
+			if !ok || u != user || p != pass {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
 				http.Error(w, "Unauthorized.", 401)
 				return
 			}
 		}
-		fn(w, r)
-	}
+		next.ServeHTTP(w, r)
+	})
 }
