@@ -1,23 +1,23 @@
 module vigilantpi
 
-go 1.24
+go 1.25.0
 
 require (
-	github.com/corona10/goimagehash v1.0.2
-	github.com/hashicorp/mdns v1.0.2
-	github.com/sparrc/go-ping v0.0.0-20190613174326-4e5b6552494c
-	github.com/stianeikeland/go-rpio/v4 v4.4.0
-	gopkg.in/telebot.v3 v3.0.0
-	gopkg.in/yaml.v2 v2.2.8
+	github.com/corona10/goimagehash v1.1.0
+	github.com/go-ping/ping v1.2.0
+	github.com/hashicorp/mdns v1.0.6
+	github.com/stianeikeland/go-rpio/v4 v4.6.0
+	gopkg.in/telebot.v3 v3.3.8
+	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (
-	github.com/kr/pretty v0.2.0 // indirect
-	github.com/miekg/dns v1.1.27 // indirect
-	github.com/nfnt/resize v0.0.0-20160724205520-891127d8d1b5 // indirect
-	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9 // indirect
-	golang.org/x/net v0.0.0-20200226121028-0de0cce0169b // indirect
-	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
-	golang.org/x/sys v0.0.0-20220114195835-da31bd327af9 // indirect
-	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/miekg/dns v1.1.72 // indirect
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
+	golang.org/x/mod v0.34.0 // indirect
+	golang.org/x/net v0.52.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/tools v0.43.0 // indirect
 )

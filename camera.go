@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	ping "github.com/sparrc/go-ping"
+	ping "github.com/go-ping/ping"
 
 	"github.com/corona10/goimagehash"
 )
