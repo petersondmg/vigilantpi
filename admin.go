@@ -162,10 +162,19 @@ func httpServer(addr, user, pass string) {
 		addr = ":80"
 	}
 	logger.Printf("starting admin server on %s", addr)
-	err := http.ListenAndServe(addr, auth(user, pass, mux))
+	err := http.ListenAndServe(addr, auth(user, pass, noCache(mux)))
 	if err != nil {
 		logger.Printf("error on http server: %s", err)
 	}
+}
+
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func auth(user, pass string, next http.Handler) http.Handler {
