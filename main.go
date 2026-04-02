@@ -102,10 +102,10 @@ func main() {
 		videosDir = "./cameras"
 	}
 
-	if ffmpeg = config.FFMPEG; ffmpeg == "" {
-		logger.Println("ffmpeg path undifined, using default value")
-		ffmpeg = "/usr/local/bin/ffmpeg"
-	}
+	StartConverter()
+
+	ScanExistingFiles()
+
 
 	if duration = config.Duration; duration == 0 {
 		logger.Println("no duration defined, using default value")

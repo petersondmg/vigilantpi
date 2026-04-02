@@ -293,10 +293,12 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 	start := time.Now()
 	dayDir := start.Format(dayDirLayout)
 
-	if c.Extension == "" {
-		c.Extension = "mp4"
+	targetExt := c.Extension
+	if targetExt == "" {
+		targetExt = "mp4"
 	}
-	fileName := start.Format("15_04_05_") + c.Name + "." + c.Extension
+
+	fileName := dayDir + "-" + start.Format("15_04_05_") + c.Name + "." + targetExt + ".ts"
 
 	if !hddIsMounted() {
 		logger.Println("can't record: hdd is not mounted")
@@ -308,9 +310,9 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 
 	var err error
 
-	recDir := path.Join(videosDir, dayDir)
-	if err = os.MkdirAll(recDir, 0774); err != nil {
-		logger.Printf("error creating recording directory %s: %s", recDir, err)
+	tmpDir := path.Join(videosDir, ".tmp")
+	if err = os.MkdirAll(tmpDir, 0774); err != nil {
+		logger.Printf("error creating tmp directory %s: %s", tmpDir, err)
 		led.BadHD()
 		return
 	}
@@ -371,15 +373,13 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 		args = append(args, "-c:a", audioCodec)
 	}
 
-    filePath := path.Join(videosDir, dayDir, fileName)
+	filePath := path.Join(tmpDir, fileName)
 
 	args = append(
 		args,
 		//sets duration
 		"-to",
 		strconv.Itoa(int(duration.Seconds())),
-		"-movflags",
-		"+faststart",
 		filePath,
 	)
 
@@ -395,8 +395,8 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 		if err != nil {
 			logger.Printf("error running ffmpeg for %s - %s", c.Name, err)
 			led.BadCamera()
-			return
 		}
+		FilesToConvert <- filePath
 		finished <- struct{}{}
 	}()
 
