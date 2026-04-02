@@ -35,7 +35,7 @@ const tpl = `
 	<br>
 
 	<h4>Log</h4>
-	<pre>:log:</pre>
+	<pre id="logs">:log:</pre>
 	<hr>
 	<br>
 
@@ -44,6 +44,16 @@ const tpl = `
 	<hr>
 	<br>
 
+	<script>
+		function updateLogs() {
+			fetch('/log-raw')
+				.then(response => response.text())
+				.then(data => {
+					document.getElementById('logs').innerText = data;
+				});
+		}
+		setInterval(updateLogs, 3000);
+	</script>
 </body>
 </html>
 `
@@ -53,6 +63,11 @@ func httpServer(addr, user, pass string) {
 
 	fs := http.FileServer(http.Dir(config.VideosDir))
 	mux.Handle("/videos/", http.StripPrefix("/videos/", fs))
+
+	mux.HandleFunc("/log-raw", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte(serverLog()))
+	})
 
 	mux.HandleFunc("/force-reboot", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-type", "text/html")
