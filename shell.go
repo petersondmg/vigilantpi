@@ -34,5 +34,10 @@ func serverDF() string {
 }
 
 func serverLog() string {
-	return execString("tail", "-n", "50", logPath)
+	res := execString("tail", "-n", "50", logPath)
+	lines := strings.Split(strings.TrimSpace(res), "\n")
+	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
+		lines[i], lines[j] = lines[j], lines[i]
+	}
+	return strings.Join(lines, "\n")
 }
