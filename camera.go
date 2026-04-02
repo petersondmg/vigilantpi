@@ -323,7 +323,7 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 	c.RunPreRecTasks()
 
 	if c.healthy {
-		logger.Printf("recording %s...\n", c.Name)
+		logger.Printf("recording %s (%s)...\n", c.Name, fileName)
 	}
 
 	codec := c.VideoCodec
@@ -351,6 +351,17 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 	if c.RTSPTransport != "" {
 		args = append(args, "-rtsp_transport", c.RTSPTransport)
 	}
+
+	// robustness flags:
+	// -timeout: general input timeout (microseconds, 15s)
+	// -analyzeduration: speed up detection
+	// -probesize: speed up detection
+	args = append(
+		args,
+		"-timeout", "15000000",
+		"-analyzeduration", "15000000",
+		"-probesize", "15000000",
+	)
 
 	args = append(
 		args,
