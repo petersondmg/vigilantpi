@@ -23,9 +23,10 @@ func init() {
 
 type (
 	Task struct {
-		Name    string       `yaml:"name"`
-		Request *RequestTask `yaml:"request"`
-		Command *string      `yaml:"command"`
+		Name    string                       `yaml:"name"`
+		Request *RequestTask                 `yaml:"request"`
+		Command *string                      `yaml:"command"`
+		Action  func(data map[string]string) `yaml:"-"`
 	}
 
 	Tasks []*Task
@@ -104,4 +105,13 @@ func (t *Task) run(data map[string]string) (string, error) {
 
 func (t *Task) Run(data map[string]string) {
 	go t.run(data)
+}
+
+func registerBuiltinTasks() {
+	taskByName["reboot"] = &Task{
+		Name: "reboot",
+		Action: func(data map[string]string) {
+			reboot()
+		},
+	}
 }

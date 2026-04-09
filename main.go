@@ -92,6 +92,7 @@ func main() {
 	loadConfig()
 
 	config.Tasks.Init()
+	registerBuiltinTasks()
 
 	go httpServer(config.Admin.Addr, config.Admin.User, config.Admin.Pass)
 

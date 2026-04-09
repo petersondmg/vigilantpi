@@ -23,9 +23,15 @@ type Config struct {
 	HealthCheckURL string `yaml:"health_check_url"`
 
 	Admin struct {
-		User string `yaml:"user"`
-		Pass string `yaml:"pass"`
-		Addr string `yaml:"addr"`
+		User  string `yaml:"user"`
+		Pass  string `yaml:"pass"`
+		Addr  string `yaml:"addr"`
+		HTTPS struct {
+			Enabled  bool   `yaml:"enabled"`
+			Addr     string `yaml:"addr"`
+			CertPath string `yaml:"cert_path"`
+			KeyPath  string `yaml:"key_path"`
+		} `yaml:"https"`
 	} `yaml:"admin"`
 
 	VideosDir string        `yaml:"videos_dir"`
@@ -164,8 +170,19 @@ func tryRollback() {
 }
 
 func serverConfig() string {
-	b, _ := yaml.Marshal(config)
+	masked := config.Masked()
+	b, _ := yaml.Marshal(masked)
 	return string(b)
+}
+
+func (c *Config) Masked() Config {
+	m := *c
+	m.Admin.Pass = "*****"
+	m.Admin.HTTPS.CertPath = "*****"
+	m.Admin.HTTPS.KeyPath = "*****"
+	m.TelegramBot.Token = "*****"
+	m.WifiPass = "*****"
+	return m
 }
 
 func loadConfig() {
@@ -190,6 +207,7 @@ func loadConfig() {
 	}
 
 	config = c
+	logger.Printf("Config loaded: HTTPS Enabled=%v, CertPath=%s, KeyPath=%s", config.Admin.HTTPS.Enabled, config.Admin.HTTPS.CertPath, config.Admin.HTTPS.KeyPath)
 	confReplacement()
 }
 
@@ -235,9 +253,9 @@ func replaceWithConf(str string, data map[string]string) string {
 	confReplacer["_now"] = now.Format("2006_01_02_15_04_05")
 	confReplacer["now"] = now.Format("2006-01-02 15:04:05")
 
-    for k, v := range data {
-        confReplacer[k] = v
-    }
+	for k, v := range data {
+		confReplacer[k] = v
+	}
 
 	return confReplaceRE.ReplaceAllStringFunc(str, func(token string) string {
 		key := strings.Trim(token, "${{}} ")

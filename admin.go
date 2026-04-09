@@ -158,11 +158,39 @@ func httpServer(addr, user, pass string) {
 		w.Write([]byte(replacer.Replace(tpl)))
 	})
 
+	h := auth(user, pass, noCache(mux))
+
+	if config.Admin.HTTPS.Enabled {
+		if config.Admin.HTTPS.CertPath == "" || config.Admin.HTTPS.KeyPath == "" {
+			logger.Fatalf("HTTPS is enabled but cert_path or key_path is empty")
+		}
+
+		if _, err := os.Stat(config.Admin.HTTPS.CertPath); os.IsNotExist(err) {
+			logger.Fatalf("HTTPS cert file not found: %s", config.Admin.HTTPS.CertPath)
+		}
+
+		if _, err := os.Stat(config.Admin.HTTPS.KeyPath); os.IsNotExist(err) {
+			logger.Fatalf("HTTPS key file not found: %s", config.Admin.HTTPS.KeyPath)
+		}
+
+		httpsAddr := config.Admin.HTTPS.Addr
+		if httpsAddr == "" {
+			httpsAddr = ":443"
+		}
+		logger.Printf("starting admin server on %s (HTTPS)", httpsAddr)
+		err := http.ListenAndServeTLS(httpsAddr, config.Admin.HTTPS.CertPath, config.Admin.HTTPS.KeyPath, h)
+		if err != nil {
+			logger.Printf("error on https server: %s", err)
+		}
+		return
+	}
+
 	if addr == "" {
 		addr = ":80"
 	}
-	logger.Printf("starting admin server on %s", addr)
-	err := http.ListenAndServe(addr, auth(user, pass, noCache(mux)))
+
+	logger.Printf("starting admin server on %s (HTTP)", addr)
+	err := http.ListenAndServe(addr, h)
 	if err != nil {
 		logger.Printf("error on http server: %s", err)
 	}
