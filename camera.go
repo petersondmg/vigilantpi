@@ -44,9 +44,10 @@ type Camera struct {
 	AudioCodec                string   `yaml:"audio_codec"`
 	Extension                 string   `yaml:"extension"`
 	RTSPTransport             string   `yaml:"rtsp_transport"`
-	InRate                    float64  `yaml:"in_rate"`
-	OutRate                   float64  `yaml:"out_rate"`
-	PreRec                    []string `yaml:"pre_rec"`
+	InRate                    float64       `yaml:"in_rate"`
+	OutRate                   float64       `yaml:"out_rate"`
+	Timeout                   time.Duration `yaml:"timeout"`
+	PreRec                    []string      `yaml:"pre_rec"`
 	AfterRec                  []string `yaml:"after_rec"`
 	DisableParallelTransition bool     `yaml:"disable_parallel_transition"`
 	MotionDetection           *struct {
@@ -353,15 +354,13 @@ func record(ctx context.Context, c *Camera, stillProcessing chan<- struct{}) {
 	}
 
 	// robustness flags:
-	// -timeout: general input timeout (microseconds, 15s)
-	// -analyzeduration: speed up detection
-	// -probesize: speed up detection
-	args = append(
-		args,
-		"-timeout", "15000000",
-		"-analyzeduration", "15000000",
-		"-probesize", "15000000",
-	)
+	// -timeout: general input timeout (microseconds)
+	if c.Timeout > 0 {
+		args = append(
+			args,
+			"-timeout", strconv.FormatInt(c.Timeout.Microseconds(), 10),
+		)
+	}
 
 	args = append(
 		args,
